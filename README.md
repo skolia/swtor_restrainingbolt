@@ -140,15 +140,17 @@ file in the game's "Assets" folder.
 
 
 # Data File Format
-PROGRAM NAME					                  Not used right now
-PROGRAM VERSION					                Not used right now
-DATA FILE					                      Literally "DATA FILE"
-Game Installation Folder			          Not used right now
-Assets Patch Version
-Assets Data Version
-MD5 Hash of the Republic Asset File
-MD5 Hash of the Imperial Asset File
-Patch Applied?  				                (0 - no, 1 - yes)
+
+Value|Comment
+PROGRAM NAME|Not used right now
+PROGRAM VERSION|Not used right now
+DATA FILE|Literally "DATA FILE"
+Game Installation Folder|Not used right now
+Assets Patch Version|Game Asset Patch Level
+Assets Data Version|Game Asset Data Level
+Checksum of the Republic Asset File|MD5 Hash
+Checksum of the Imperial Asset File|MD5 Hash
+Patch Applied Flag|0 = No, 1 = Yes
 
 
 
