@@ -53,6 +53,7 @@ will try to force choke you to death.
 
 # Commands
 
+```
 swtor_restrainingbolt -restore			Restore from Backup Folder
 swtor_restrainingbolt -version			Show Version Number and Exit
 swtor_restrainingbolt -help			Show Command List and Exit
@@ -60,7 +61,7 @@ swtor_restrainingbolt -debug			Show Debug Messages
 swtor_restrainingbolt -data folder		Specify Data Folder
 swtor_restrainingbolt -backup folder		Specify Backup Folder
 swtor_restrainingbolt -game folder		Specify SWTOR Folder
-
+```
 
 # Usage Notes
 
@@ -70,9 +71,10 @@ it does this by reading the registry.
 If this fails, for whatever reason,
 you can use the -game option to specify the folder.
 
-	e.g.	
-		swtor_restrainingbolt -game "D:\My Games\SWTOR"
-
+e.g.	
+```
+swtor_restrainingbolt -game "D:\My Games\SWTOR"
+```
 
 
 # Backups
@@ -84,8 +86,11 @@ variable).
 If it's not defined or accessible, it will use the current folder instead.
 
 You can override this by using the option -backup.
-	e.g.
-		swtor_restrainingbolt -backup "D:\Temp" 
+
+e.g.
+```
+swtor_restrainingbolt -backup "D:\Temp" 
+```
 
 A backup folder will still be created, D:\Temp\SWTOR_MOD\Backup in this case.
 
@@ -100,8 +105,11 @@ the current user's APPDATA folder under "Local".
 If it's not defined or accessible, it will use the current folder instead.
 
 You can override this by using the option -data
-	e.g.
-		swtor_restrainingbolt -data "D:\Temp" 
+
+e.g.
+```
+swtor_restrainingbolt -data "D:\Temp" 
+```
 
 A SWTOR_MOD folder will still be created, D:\Temp\SWTOR_MOD in this case.
 
@@ -111,8 +119,9 @@ A SWTOR_MOD folder will still be created, D:\Temp\SWTOR_MOD in this case.
 You can use multiple switches at the same time,
 for example:
 
+```
 -data "D:\My Data" -game "C:\Games\SWTOR" -backup "E:\Backup"
-
+```
 
 # How It Works
 
@@ -128,12 +137,15 @@ of hearing C2N2 drone on, you instead hear blissful silence instead!
 
 example:
 
-	cnv_location_companion_characters_multi_republic_c2n2_c2n2_98_m.wem
+```
+cnv_location_companion_characters_multi_republic_c2n2_c2n2_98_m.wem
+```
 
 becomes
 
-	cnv_location_companion_characters_multi_republic_XXXX_XXXX_98_m.wem
-
+```
+cnv_location_companion_characters_multi_republic_XXXX_XXXX_98_m.wem
+```
 
 It gets the asset version information from the assets_swtor_main_version.txt
 file in the game's "Assets" folder.
