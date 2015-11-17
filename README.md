@@ -142,6 +142,7 @@ file in the game's "Assets" folder.
 # Data File Format
 
 Value|Comment
+-----|-------
 PROGRAM NAME|Not used right now
 PROGRAM VERSION|Not used right now
 DATA FILE|Literally "DATA FILE"
