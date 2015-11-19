@@ -46,19 +46,20 @@ This software is freeware, if you make money on it - I'll be very sad and  will 
 
 # Commands
 
-```
-swtor_restrainingbolt -restore			Restore from Backup Folder
-swtor_restrainingbolt -nobackup			Don't Make Backup Copies(*)
-swtor_restrainingbolt -nodatafile		Don't Make/Update a Data File(*)
-swtor_restrainingbolt -version			Show Version Number and Exit
-swtor_restrainingbolt -help			Show Command List and Exit
-swtor_restrainingbolt -debug			Show Debug Messages
-swtor_restrainingbolt -trace			Show Debug Trace Messages
-swtor_restrainingbolt -data folder		Specify Data Folder
-swtor_restrainingbolt -backup folder		Specify Backup Folder
-swtor_restrainingbolt -game folder		Specify SWTOR Folder
-swtor_restrainingbolt -debug_nopatch		Don't actually update the asset file(**)
-```
+Argument|Description
+--------|-----------
+-restore|Restore from Backup Folder
+-nobackup|Don't Make Backup Copies(*)
+-nodatafile|Don't Make/Update a Data File(*)
+-version|Show Version Number and Exit
+-help|Show Command List and Exit
+-debug|Show Debug Messages
+-trace|Show Debug Trace Messages (implies -debug)
+-data folder|Specify Data Folder
+-backup folder|Specify Backup Folder
+-game folder|Specify SWTOR Folder
+-debug_nopatch|Don't actually update the asset file(**)
+
 
 (*)	Not recommended
 
@@ -74,7 +75,7 @@ The search order of keys is as follows:
 * ```HKEY_LOCAL_MACHINE\SOFTWARE\Wow6432Node\BioWare\Star Wars-The Old Republic``` 
 * ```HKEY_LOCAL_MACHINE\SOFTWARE\BioWare\Star Wars-The Old Republic```
 
-If this fails, for whatever reason, you can use the -game option to specify the folder.   Unless ```-no-data``` is used, it will remember the folder on subsequent runs.
+If this fails, for whatever reason, you can use the -game option to specify the folder.   Unless ```-nodata``` is used, it will remember the folder on subsequent runs.
 
 
 e.g.	
