@@ -1,5 +1,5 @@
 # Star Wars: The Old Republic
-# "Restraining Bolt"
+"Restraining Bolt"
 
 # IMPORTANT
 
@@ -42,13 +42,13 @@ I'm using Perl v5.18.4 for development.
 
 Perl modules used:
 ```
-Env;
-Switch;
-Digest::MD5;
-File::Copy;
-Getopt::Long;
-File::Spec;
-Win32::TieRegistry;
+Env
+Switch
+Digest::MD5
+File::Copy
+Getopt::Long
+File::Spec
+Win32::TieRegistry
 ```
 
 # LICENSE
