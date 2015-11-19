@@ -35,9 +35,21 @@ Unfortunately you won't be able to see any messages the program displays, althou
 If you wish to use the shortcut method, I would recommend doing the initial
 run in a command window to see if there are any issues.
 
-This software is written in Strawberry Perl and compiled with PAR::Packer.
+This software is written in Strawberry Perl and compiled with ```PAR::Packer```.
 The source is included.
 
+I'm using Perl v5.18.4 for development.
+
+Perl modules used:
+```
+Env;
+Switch;
+Digest::MD5;
+File::Copy;
+Getopt::Long;
+File::Spec;
+Win32::TieRegistry;
+```
 
 # LICENSE
 
