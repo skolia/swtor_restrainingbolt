@@ -1,6 +1,6 @@
 #
 #	Star Wars: The Old Republic
-#	DroidMod
+#	Restraining Bolt
 #
 #=============================================================================
 
@@ -8,6 +8,7 @@ use strict;
 use warnings;
 
 use Env;
+use Switch;
 use Digest::MD5;
 use File::Copy;
 use Getopt::Long;
@@ -15,17 +16,25 @@ use File::Spec;
 use Win32::TieRegistry;
 
 use constant{
-	PROGRAM_VERSION => "201511161613",
+	PROGRAM_VERSION => "201511181736",
 	PROGRAM_SHORT_NAME => "restrainingbolt",
 	PROGRAM_NAME => "Restraining Bolt",
 	PROGRAM_DESCRIPTION => "Ship Droid Mod",
 	GAME_NAME => "Star Wars: The Old Republic",
 
+	#	Special
+		
+	INVALID_HASH => "***",
+	NO_DATA_ALPHA => "",
+	NO_DATA_NUMERIC => -1,
+
 	#	Defaults
 
+	DEFAULT_OPT_NO_DATA_FILE => 0,
+	DEFAULT_OPT_USE_JUMPBACK => 0,
+	DEFAULT_OPT_NO_BACKUP => 0,			# Not Implemented
 	DEFAULT_DEBUG => 0,				# 0 Debug Off, 1 DEBUG, 2 DEBUG TRACE
 	DEFAULT_NO_WRITE => 0,				# 0 Normal, 1 Don't actually patch
-	DEFAULT_USE_JUMPBACK => 0,
 	DEFAULT_GAME_ROOT => ".",
 	DEFAULT_BACKUP_ROOT => ".",
 	DEFAULT_DATA_ROOT => ".",
@@ -64,22 +73,6 @@ use constant{
 #	READ_BUFFER_SIZE => 268435456,		#	256MB
 #	READ_BUFFER_SIZE => 536870912,		#	512MB
 
-#	Strings
-
-	REPAIR_ADVICE_MUST => "You will need to perform a repair from the launcher to restore the originals.",
-	REPAIR_ADVICE_MAY => "You may need to perform a repair from the launcher to restore the originals.",
-	MSG_MOD_ABORT => "Modification Cancelled",
-	MSG_MOD_OK => "Modification Successful!",
-	MSG_MOD_ALREADY_PATCHED => "Modification Already In Place!",
-	MSG_MOD_FAIL => "Modification Failed",
-	MSG_UNINSTALL => "To restore original assets:",
-	MSG_FAIL_TIP1 => "Before attempting to run this again,",
-	MSG_FAIL_TIP2 => "you may need to restore original assets:",
-	MSG_RESTORE_OK => "Restore Successful!",
-	MSG_RESTORE_FAIL => "Restore Failed!",
-	TIP_MANUAL => "* Manually copy assets from backup folder to game assets folder",
-	TIP_RESTORE => "* Run this tool with -restore option",
-	TIP_REPAIR => "* Perform a repair from the launcher",
 };
 
 
@@ -87,9 +80,14 @@ use constant{
 
 my $debug;
 
+my $use_jumpback = DEFAULT_OPT_USE_JUMPBACK;
+my $no_datafile = DEFAULT_OPT_NO_DATA_FILE;
+my $no_backup = DEFAULT_OPT_NO_BACKUP;				#	Not Implemented
+
 my $backuproot;
 my $gameroot;
 my $dataroot;
+my $detected_gameroot;
 
 my $folder_assets;
 my $folder_data;
@@ -104,18 +102,21 @@ my $asset_version_data;
 my $hash_asset_republic;
 my $hash_asset_imperial;
 
+my $datafile_version = PROGRAM_VERSION;
+
 my $stored_version_patch;
 my $stored_version_data;
 my $stored_hash_asset_republic;
 my $stored_hash_asset_imperial;
 my $stored_is_patched;
+my $stored_gameroot;
+my $stored_backuproot;
 
 my $retval;
 my $retcode;
 
 my $buffer;
-
-my $use_jumpback = DEFAULT_USE_JUMPBACK;
+my $reason;
 
 my $pathname_republic_asset;
 my $pathname_imperial_asset;
@@ -148,8 +149,24 @@ my $elapsed_run_time;
 my $registry_key;
 my $registry_value;
 
+my $temp_gameroot = "";
+my $temp_backuproot= "";
+my $temp_dataroot = "";
+
 my $temp_path;
 
+my $flag_using_default_gameroot = 1;
+my $flag_using_default_backuproot = 1;
+my $flag_using_default_dataroot = 1;
+my $flag_failed_parsing_asset_version = 0;
+my $flag_skip_restore = 0;
+my $flag_skip_asset_version_check = 0;
+my $flag_skip_patch = 0;
+my $flag_skip_backup = 0;
+my $flag_assets_verified = 0;
+my $flag_update_datafile = 0;
+my $flag_asset_checksum_match = 0;
+my $flag_game_path_detected = 0;
 my $flag_updated_assets = 0;
 my $flag_data_file_read = 0;
 my $flag_new_data_file = 0;
@@ -157,10 +174,10 @@ my $flag_assets_already_patched = 0;
 my $flag_success = 0;
 my $flag_backup_ok = 1;
 my $flag_backup_success = 0;
-my $flag_skip_backup = 0;
 my $flag_debug_no_op = DEFAULT_NO_WRITE;
 my $flag_restore_operation = 0;
 my $flag_exit = 0;
+my $flag_trace = -1;
 
 my $flag_assets_exist = 0;
 my $flag_backups_exist = 0;
@@ -173,6 +190,7 @@ my $mod_file_count = MOD_FILE_COUNT;
 $gameroot = DEFAULT_GAME_ROOT;
 $backuproot = DEFAULT_BACKUP_ROOT;
 $dataroot = DEFAULT_DATA_ROOT;
+$detected_gameroot = "";
 
 $folder_backup  = FOLDER_BACKUP;
 $folder_data = FOLDER_DATA;
@@ -198,17 +216,20 @@ $game_name = GAME_NAME;
 
 $debug = DEFAULT_DEBUG;
 
-$assetpathname = "";
-$backuppathname = "";
+$assetpathname = NO_DATA_ALPHA;
+$backuppathname = NO_DATA_ALPHA;
 
-$stored_version_patch = -1;
-$stored_version_data = -1;
-$stored_hash_asset_republic = -1;
-$stored_hash_asset_imperial = -1;
-$stored_is_patched = -1;
+$stored_version_patch = NO_DATA_NUMERIC;
+$stored_version_data = NO_DATA_NUMERIC;
+$stored_hash_asset_republic = INVALID_HASH;
+$stored_hash_asset_imperial = INVALID_HASH;
+$stored_is_patched = NO_DATA_NUMERIC;
+$stored_gameroot = NO_DATA_ALPHA;
+$stored_backuproot = NO_DATA_ALPHA;
 
 $retval = 0;
 $retcode = 0;
+
 
 #-----------------------------------------------------------
 # Program Start
@@ -228,7 +249,7 @@ writelog("TRACE MODE ENABLED",TRACE);
 if (READ_BUFFER_SIZE > 0) {
 	writelog("Data Buffer Size: " . READ_BUFFER_SIZE,DEBUG);
 	if ($use_jumpback) {
-		writelog("Using JumpBack Scanning");
+		writelog("Using JumpBack Scanning.");
 	}
 }
 
@@ -241,17 +262,19 @@ if ($flag_debug_no_op) {
 writelog("Attempting to locate game installation",TRACE);
 $registry_value = $Registry->{SWTOR_X64_REGISTRY_KEY . "\\" . SWTOR_REGISTRY_VALUE} or $registry_key = "";
 if ($registry_value) {
-	$gameroot = $registry_value;
+	$detected_gameroot = $registry_value;
 } else {
 	$registry_value = $Registry->{SWTOR_X86_REGISTRY_KEY . "\\" . SWTOR_REGISTRY_VALUE} or $registry_key = "";
 	if ($registry_value) {
-		$gameroot = $registry_value;
+		$detected_gameroot = $registry_value;
 	}
 }
 if ($registry_value) {
-	writelog("Installation located at '$gameroot'",TRACE);
+	writelog("Installation located at '$detected_gameroot'",TRACE);
+	$flag_game_path_detected = 1;
 } else {
 	writelog("Could not locate game installation",TRACE);
+	$flag_game_path_detected = 0;
 }
 
 #	Check Local Temp for use as Backup Root
@@ -290,35 +313,149 @@ if ($local_appdata) {
 	writelog("Data root fallback to '$dataroot'",TRACE);
 }
 
+#	Temporary Store Roots
+
+
+$temp_gameroot = $gameroot;
+$temp_backuproot = $backuproot;
+$temp_dataroot = $dataroot;
+
 #	Process Options
 
 my $result = GetOptions (
-			"backup=s" => \$backuproot,
-			"game=s" => \$gameroot,
-			"data=s" => \$dataroot,
-			"version|ver" => sub{showVersion()},
-			"help|?" => sub{showHelp()},
-			"restore|r" => \$flag_restore_operation,
-			"debug" =>\$debug,
+			"data=s" => \$dataroot,				# Specify Mod Data Folder
+			"backup=s" => \$backuproot,			# Specify Backup Folder
+			"game=s" => \$gameroot,				# Specify Game Folder
+			"version|ver" => sub{showVersion()},		# Show Version
+			"help|?" => sub{showHelp()},			# Show Help
+			"restore|r" => \$flag_restore_operation,	# Restore From Backup
+			"nodata" => \$no_datafile,			# Don't Use Data File
+			"nobackup" => \$no_backup,			# Don't Use Backups (Restore Not Available)
+			"debug" => \$debug,				# Debug Messages
+			"trace" => \$flag_trace,			# Debug Messages - Trace Level
+			"debug_nopatch" => \$flag_debug_no_op,		# Debug: Don't Actually Patch
 );
 
 
+if ($flag_trace > 0) {
+	$debug = TRACE;
+}
 
-if ($gameroot eq DEFAULT_GAME_ROOT) {
-	writelog("WARNING: $game_name location not detected or specified.");
+if ($no_backup > 0) {
+	writelog("WARNING!!!"),
+	writelog("You have specified the NO BACKUP option."),
+	writelog();
+	writelog("This will disable the -restore function entirely.");
+	writelog();
+	writelog("If you wish to restore your asset files you will need to:");
+	writelog("* Copy them from your own backup");
+	writelog("* Perform a repair in the $game_name launcher");
+	writelog();
+}
+
+
+if ($temp_dataroot ne $dataroot) {
+	$flag_using_default_dataroot = 0;
+}
+
+if ($temp_gameroot ne $gameroot) {
+	$flag_using_default_gameroot = 0;
+}
+	
+if ($temp_backuproot ne $backuproot) {
+	$flag_using_default_backuproot = 0;
+}
+
+
+
+if ($no_datafile > 0) {
+	writelog("Data file is disabled,");
+} else {
+	#	Data File Build Path
+
+	writelog("Building Data File Path",TRACE);
+
+	if ($flag_using_default_dataroot) {
+		writelog("Using Default Data File Path",TRACE);
+	} else {
+		writelog("Using Specified Data File Path",TRACE);
+	}
+
+	$pathname_datafile = File::Spec->catfile($dataroot, $folder_data);
+	$pathname_datafile = File::Spec->catfile($pathname_datafile, $file_data);
+
+	#	Read Data File
+
+	if (-e $pathname_datafile) {
+		writelog("Attempting to read data file at '$pathname_datafile'",DEBUG);
+		if (readDataFile($pathname_datafile)) {
+			$flag_data_file_read = 1;
+
+			if ($flag_using_default_gameroot) {
+				if ($stored_gameroot ne DEFAULT_GAME_ROOT) {
+					writelog("Checking stored game root",DEBUG);
+					if (length($stored_gameroot) > 0) {
+						if (-d $stored_gameroot) {
+							$gameroot = $stored_gameroot;
+							$flag_using_default_gameroot = 0;
+							writelog("Using stored game location",TRACE);
+						} else {
+							writelog("Stored game location, '$stored_gameroot' does not exist",TRACE);
+						}
+					}
+				}
+			}
+
+			if ($flag_using_default_backuproot) {
+				if ($stored_backuproot ne DEFAULT_BACKUP_ROOT) {
+					writelog("Checking stored backup root",DEBUG);
+					if (length($stored_backuproot) > 0) {
+						if (-d $stored_backuproot) {
+							$backuproot = $stored_backuproot;
+							$flag_using_default_backuproot = 0;
+							writelog("Using stored backup location",TRACE);
+						} else {
+							writelog("Stored backup location, '$stored_backuproot' does not exist",TRACE);
+						}
+					}
+				}	
+			}
+		} else {
+			writelog("ERROR: Failed to read data file. Creating new one.",DEBUG);
+			$flag_data_file_read = 0;
+			$flag_new_data_file = 1;
+		}
+	} else {
+		writelog("ERROR: No data file. Creating new one.",DEBUG);
+		$flag_data_file_read = 0;
+		$flag_new_data_file = 1;
+	}
+}
+
+
+#	Use Detected Game Root if not set
+
+if ($flag_using_default_gameroot) {
+	if ($flag_game_path_detected) {
+		$gameroot = $detected_gameroot;
+		$flag_using_default_gameroot = 0;
+		writelog("Using detected game location location.");
+	}
+}
+
+#	Warn If Game Root and Backup Root are defaults
+
+if ($flag_using_default_gameroot) {
+	writelog("WARNING: Game location not detected or specified, using current folder.");
 } 
 
-if ($backuproot eq DEFAULT_BACKUP_ROOT) {
-	writelog("WARNING: backup location not specified, using current folder.");
+if ($flag_using_default_backuproot) {
+	writelog("WARNING: Backup location not specified, using current folder.");
 } 
 
-if ($dataroot eq DEFAULT_DATA_ROOT) {
-	# 	Using current folder for data
-} 
+#	Build Asset and Backup Paths
 
-#	Build Paths
-
-writelog("Building Paths",TRACE);
+writelog("Building Asset and Backup Paths",TRACE);
 
 $pathname_republic_asset = File::Spec->catfile($gameroot, $folder_assets);
 $pathname_republic_asset = File::Spec->catfile($pathname_republic_asset, "$file_republic_assets.$ext_assets");
@@ -335,21 +472,34 @@ $pathname_imperial_backup = File::Spec->catfile($pathname_imperial_backup, "$fil
 $pathname_asset_version = File::Spec->catfile($gameroot, $folder_assets);
 $pathname_asset_version = File::Spec->catfile($pathname_asset_version, $file_asset_version);
 
-$pathname_datafile = File::Spec->catfile($dataroot, $folder_data);
-$pathname_datafile = File::Spec->catfile($pathname_datafile, $file_data);
+#	Status (Debug)
 
 writelog("'$active_path' is the current folder.",DEBUG);
-writelog("Using '$gameroot' as the location for $game_name.");
-writelog("Using '$backuproot\\$folder_backup' for the backup folder.");
+writelog("Using '$gameroot' as the location for $game_name.",DEBUG);
+writelog("Using '$backuproot\\$folder_backup' for the backup folder.",DEBUG);
 writelog("Using '$pathname_asset_version' for the asset version.",DEBUG);
-writelog("Using '$pathname_datafile' for the data file.",DEBUG);
+
+if ($flag_new_data_file) {
+	writelog("Using '$pathname_datafile' for the new data file.",DEBUG);
+} else {
+	writelog("Using '$pathname_datafile' for the data file.",DEBUG);
+}
 
 #	Get Asset Version
 
 if (-e $pathname_asset_version) {
 	$retval = getAssetVersion($pathname_asset_version);
 	($asset_version_patch,$asset_version_data) = split(/\|/,$retval,2);
-	if ($asset_version_patch == -1) {
+
+	if ($asset_version_patch eq NO_DATA_NUMERIC) {
+		$flag_failed_parsing_asset_version = 1;
+	}
+
+	if ($asset_version_data eq NO_DATA_NUMERIC) {
+		$flag_failed_parsing_asset_version = 1;
+	}
+
+	if ($flag_failed_parsing_asset_version) {
 		writelog("ERROR: Failed to parse asset version file.");
 	} else {
 		writelog("Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",TRACE);
@@ -358,118 +508,46 @@ if (-e $pathname_asset_version) {
 	writelog("ERROR: Could not locate asset version file.");
 }
 
-if (-e $pathname_datafile) {
-	writelog("Attempting to read data file at '$pathname_datafile'",DEBUG);
-	if (readDataFile($pathname_datafile)) {
-		$flag_data_file_read = 1;
-	} else {
-		writelog("ERROR: Failed to read data file. Creating new one.",DEBUG);
-		$flag_data_file_read = 0;
-		$flag_new_data_file = 1;
-	}
+if ($no_datafile > 0) {
+	# 	No Data File
 } else {
-	writelog("ERROR: No data file. Creating new one.",DEBUG);
-	$flag_data_file_read = 0;
-	$flag_new_data_file = 1;
+	if ($flag_data_file_read) {
+		writelog("Using Data File: '$pathname_datafile'.",DEBUG);
+	} else {
+		writelog("Creating New Data File: '$pathname_datafile'.",DEBUG);
+		if (-d $dataroot) {
+			writelog("Folder '$dataroot' Exists",DEBUG);
+			$temp_path = File::Spec->catfile($dataroot, $folder_data);
+			if (-d $temp_path) {
+				writelog("Folder '$temp_path' Exists",DEBUG);
+			} else {
+				writelog("Folder '$temp_path' Does Not Exist",DEBUG);
+				if (mkdir $temp_path) {
+					writelog("Created '$temp_path' OK",DEBUG);
+				} else {
+					writelog("Attempt to Create '$temp_path' FAILED",DEBUG);
+				}
+			}
+		} else {
+			writelog("ERROR: Data folder does not exist!");
+		}
+	}
 }
 
-if ($flag_data_file_read) {
-	writelog("Using Data File: '$pathname_datafile'.",DEBUG);
-} else {
-	writelog("Creating New Data File: '$pathname_datafile'.",DEBUG);
-	if (-d $dataroot) {
-		writelog("Folder '$dataroot' Exists",DEBUG);
-		$temp_path = File::Spec->catfile($dataroot, $folder_data);
-		if (-d $temp_path) {
-			writelog("Folder '$temp_path' Exists",DEBUG);
-		} else {
-			writelog("Folder '$temp_path' Does Not Exist",DEBUG);
-			if (mkdir $temp_path) {
-				writelog("Created '$temp_path' OK",DEBUG);
-			} else {
-				writelog("Attempt to Create '$temp_path' FAILED",DEBUG);
-			}
-		}
-	} else {
-		writelog("ERROR: Data folder '$dataroot' does not exist!");
-	}
+#	Check if backups exist
+
+if (-e $pathname_republic_backup) {
+	$flag_backups_exist++;
+}
+
+if (-e $pathname_imperial_backup) {
+	$flag_backups_exist++;
 }
 
 #	Run Restore Operation (if selected)
 
 if ($flag_restore_operation) {
-	if (restoreAssets()) {
-		if ($flag_data_file_read) {
-			writelog("Verifying Assets for Data File",TRACE);
-
-			$flag_assets_already_patched = assetsPatched();
-
-			$retval = 0;
-
-			writelog("Getting MD5 hashes for assets.",TRACE);
-			writelog("Getting MD5 hash for $name_republic asset file.",TRACE);
-
-			$hash_asset_republic = getFileHash($pathname_republic_asset);
-			if ($hash_asset_republic eq "ERROR") {
-				writelog("ERROR: Failed to get MD5 hash for $name_republic asset file.",TRACE);
-			} else {
-				if ($stored_hash_asset_republic ne "ERROR") {
-					if ($stored_hash_asset_republic eq $hash_asset_republic) {
-						$retval++
-					}
-				}
-			}
-
-			writelog("Getting MD5 hash for $name_imperial asset file.",TRACE);
-			$hash_asset_imperial = getFileHash($pathname_imperial_asset);
-			if ($hash_asset_imperial eq "ERROR") {
-				writelog("ERROR: Failed to get MD5 hash for $name_imperial asset file.",TRACE);
-			} else {
-				if ($stored_hash_asset_imperial ne "ERROR") {
-					if ($stored_hash_asset_imperial eq $hash_asset_imperial) {
-						$retval++
-					}
-				}
-			}
-
-			if ($retval == $mod_file_count) {
-				writelog("Asset hashes match the originals",TRACE);
-				$stored_is_patched = 0;
-			} else {
-				writelog("WARNING: Assets may still be patched!  Checksums do not match");
-			}
-
-			if ($flag_assets_already_patched == $mod_file_count) {
-				$stored_is_patched = 1;
-				writelog("WARNING: Assets are still patched!");
-			} else {
-				$stored_is_patched = 0;
-			}
-			
-
-			if ($retval == $mod_file_count) {
-				if ($flag_assets_already_patched == 0 ) {
-					writelog("Assets Verified");
-				}
-			}
-
-			writelog("Updating Data File '$pathname_datafile'",TRACE);
-
-			$retval = writeDataFile($pathname_datafile);
-
-			if ($retval) {
-				writelog("Data File Written OK",DEBUG);
-			} else {
-				writelog("ERROR: Could not write data file.");
-			}
-		} else {
-			writelog("No data file.",DEBUG);
-		}
-	} else {
-		writelog("restoreAssets failed",TRACE);
-	}
-	$flag_exit = 1;
-	exit(0);
+	optRestoreOperation();
 }
 
 #	Verify Assets
@@ -507,132 +585,95 @@ if (-e $pathname_imperial_asset) {
 
 if ($flag_assets_exist == $mod_file_count) {
 	$flag_assets_already_patched = assetsPatched();
-
-	if (-e $pathname_republic_backup) {
-		$flag_backups_exist++;
-	}
-
-	if (-e $pathname_imperial_backup) {
-		$flag_backups_exist++;
-	}
 } else {
-	writelog("Could not locate one or more asset files");
+	writelog("Could not locate one or more asset files.");
 	writelog("Modification Cancelled");
-	$flag_backup_ok = -2;
-	$flag_skip_backup = 1;
-	$flag_success = 0;
 	$flag_exit = 1;
 }
 
-if ($flag_assets_already_patched ==  $mod_file_count) {
-	$flag_success = 2;
-	$flag_backup_ok = 255;
-	$flag_skip_backup = 1;
+if ($flag_assets_already_patched == $mod_file_count) {
 	$flag_exit = 1;
 }
 
-if ($flag_exit) {
-	#	Exiting
-} else {
-	if (($stored_version_patch != $asset_version_patch) || ($stored_version_data ne $asset_version_data)) {
-		$flag_updated_assets = 1;
+if (!$flag_exit) {
+	if (!$flag_skip_asset_version_check) {
+		if (($stored_version_patch != $asset_version_patch) || ($stored_version_data ne $asset_version_data)) {
+			$flag_updated_assets = 1;
 
-		if ($flag_new_data_file == 1) {
-			writelog("New Data.",DEBUG);
-		} else {
-			writelog("Updating Data.",DEBUG);			
-		}
-
-		# Data Has Changed or is new
-
-		writelog("Getting MD5 hashes for assets.",DEBUG);
-		writelog("Getting MD5 hash for $name_republic asset file.",DEBUG);
-
-		$hash_asset_republic = getFileHash($pathname_republic_asset);
-		if ($hash_asset_republic eq "ERROR") {
-			writelog("ERROR: Failed to get MD5 hash for $name_republic asset file.",DEBUG);
-		}
-
-		writelog("Getting MD5 hash for $name_imperial asset file.",DEBUG);
-		$hash_asset_imperial = getFileHash($pathname_imperial_asset);
-		if ($hash_asset_imperial eq "ERROR") {
-			writelog("ERROR: Failed to get MD5 hash for $name_imperial asset file.",DEBUG);
-		}
-
-		writelog("$name_republic Asset Hash: $hash_asset_republic",DEBUG);
-		writelog("$name_imperial Asset Hash: $hash_asset_imperial",DEBUG);
-
-		if ($flag_new_data_file) { 
-			$stored_version_patch = $asset_version_patch;
-			$stored_version_data = $asset_version_data;
-			$stored_hash_asset_republic = $hash_asset_republic;
-			$stored_hash_asset_imperial = $hash_asset_imperial;
-			if ($flag_assets_already_patched == $mod_file_count) {
-				$stored_is_patched = 1;
-			} else {
-				$stored_is_patched = 0;
-			}
+			if ($flag_new_data_file == 1) {
+				writelog("New Data.",DEBUG);
 			writelog("Current Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
-		} else {
-			# TO DO
-			#	update file
-			#	right now it just does the same thing but shuld probably be smarter
-
-			$stored_version_patch = $asset_version_patch;
-			$stored_version_data = $asset_version_data;
-			$stored_hash_asset_republic = $hash_asset_republic;
-			$stored_hash_asset_imperial = $hash_asset_imperial;
-			if ($flag_assets_already_patched == $mod_file_count) {
-				$stored_is_patched = 1;
 			} else {
-				$stored_is_patched = 0;
+				writelog("Updating Data.",DEBUG);			
+				writelog(" Stored Asset Version is Patch: $stored_version_patch; Data: $stored_version_data",DEBUG);
+				writelog("Current Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
 			}
 
-			writelog(" Stored Asset Version is Patch: $stored_version_patch; Data: $stored_version_data",DEBUG);
-			writelog("Current Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
-		}
+			$hash_asset_republic = INVALID_HASH;
+			$hash_asset_imperial = INVALID_HASH;
 
-		$retval = writeDataFile($pathname_datafile);
+			if (getAssetHashes()) {
+				writelog("$name_republic Asset Hash: $hash_asset_republic",DEBUG);
+				writelog("$name_imperial Asset Hash: $hash_asset_imperial",DEBUG);
 
-		if ($retval) {
-			writelog("Data File Written OK",DEBUG);
+				$stored_version_patch = $asset_version_patch;
+				$stored_version_data = $asset_version_data;
+				$stored_hash_asset_republic = $hash_asset_republic;
+				$stored_hash_asset_imperial = $hash_asset_imperial;
+
+				if ($flag_assets_already_patched == $mod_file_count) {
+					$stored_is_patched = 1;
+				} else {
+					$stored_is_patched = 0;
+				}
+		
+				if ($no_datafile > 0) {
+					#	No Data File
+				} else {
+					$retval = writeDataFile($pathname_datafile);
+	
+					if ($retval) {
+						writelog("Data File Written OK",DEBUG);
+						$flag_update_datafile = 0;
+					} else {
+						writelog("ERROR: Could not write data file.");
+					}
+				}
+			} else {
+				writelog("ERROR: Could not get updated checksums!");
+			}
+
 		} else {
-			writelog("ERROR: Could not write data file.");
+			# Data Version is the same
+
+			writelog("Data Unchanged",DEBUG);
+			writelog("Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
+
+			$flag_updated_assets = 0;
 		}
-	} else {
-		# Data Version is the same
-
-		writelog("Data Unchanged",DEBUG);
-		writelog("Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
-
-		$flag_updated_assets = 0;
 	}
 }
 
-if ($flag_exit) {
-	# Exiting
-} else {
-	if ($flag_backups_exist == $mod_file_count) {
-		# Determine if backups are needed
+# 	Determine if backups are present
 
+if (!$flag_exit) {
+	if ($flag_backups_exist == $mod_file_count) {
 		if ($flag_updated_assets) {
-			writelog("Backups Will Be Refreshed");
+			writelog("Backups Will Be Refreshed.");
 			$flag_skip_backup = 0;
 		} else {
-			writelog("Backups Already Exist, Skipping");
+			writelog("Backups Already Exist, Skipping.");
 			$flag_skip_backup = 1;
 		}
-
-
 	} else {
 		$flag_skip_backup = -1;
 	}
 }
 
-if ($flag_exit) {
-	# Exiting
-} else {
-	if ($flag_skip_backup == 0) {
+#	Determine if backups are stale
+
+if (!$flag_exit) {
+	if (!$flag_skip_backup) {
 		if ($flag_assets_already_patched) {
 			writelog("Assets Are Already Patched!");
 			$flag_skip_backup = 3;
@@ -670,9 +711,7 @@ writelog("Assets Already Patched: $flag_assets_already_patched",DEBUG);
 
 #	Back Up Asset Files (if needed)
 
-if ($flag_exit) {
-	#	Exiting
-} else {
+if (!$flag_exit) {
 	if ($flag_skip_backup > 0) {
 		$flag_backup_ok = 255;
 
@@ -683,7 +722,6 @@ if ($flag_exit) {
 		if ($flag_skip_backup == 6) {
 			$flag_backup_ok = -2;
 		}
-
 	} else {
 
 		#	Check Backup Location
@@ -704,10 +742,10 @@ if ($flag_exit) {
 					
 			}
 		} else {
-			writelog("ERROR: $backuproot does not exist.");
+			writelog("ERROR: '$backuproot' does not exist.");
 		}
 
-		writelog("Backing Up Assets");
+		writelog("Backing Up Assets.");
 		writelog("Backing Up Asset File: $name_republic");
 		$retval = backupFile($pathname_republic_asset,$pathname_republic_backup);
 		if ($retval > 0) {
@@ -741,72 +779,84 @@ if ($flag_exit) {
 
 #	Patch Assets
 
-if ($flag_backup_ok > 0) {
-	if ($flag_exit) {
-		#	Exiting
-	} else {
-		$flag_success = 0;
+if (!$flag_exit) {
+	if ($flag_backup_ok > 0) {
+		if (!$flag_skip_patch) {
+			$flag_success = 0;
 
-		writelog("Patching Assets");
+			writelog("Patching Assets.");
 
-		writelog("Patching Assets: $name_republic");
-		$retval = patchFile($pathname_republic_asset,$search_republic,$replace_republic);
-		if ($retval > 0) {
-			$flag_success++;
-		}
+			writelog("Patching Assets: $name_republic");
+			$retval = patchFile($pathname_republic_asset,$search_republic,$replace_republic);
+			if ($retval > 0) {
+				$flag_success++;
+			}
 
-		writelog("Patching Assets: $name_imperial");
-		$retval = patchFile($pathname_imperial_asset,$search_imperial,$replace_imperial);
-		if ($retval > 0) {
-			$flag_success++;
-		}
+			writelog("Patching Assets: $name_imperial");
+			$retval = patchFile($pathname_imperial_asset,$search_imperial,$replace_imperial);
+			if ($retval > 0) {
+				$flag_success++;
+			}
 		
-		if ($flag_success == $mod_file_count) {
-			$stored_is_patched = 1;
+			if ($flag_success == $mod_file_count) {
+				$stored_is_patched = 1;
 
-			$retval = writeDataFile($pathname_datafile);
+				if ($no_datafile > 0) {
+					#	No Data File
+				} else {
+					$retval = writeDataFile($pathname_datafile);
 
-			if ($retval) {
-				writelog("Data File Written OK",DEBUG);
-			} else {
-				writelog("ERROR: Could not write data file.");
+					if ($retval) {
+						writelog("Data File Written OK",DEBUG);
+						$flag_update_datafile = 0;
+					} else {
+						writelog("ERROR: Could not write data file.");
+					}
+				}
 			}
 		}
 	}
 } else {
-	if ($flag_exit) {
-		# 	Exiting
-	} else {
-		writelog("Error Backing Up Assets, Modification Cancelled");	
+	if (!$flag_exit) {
+		writelog("Error Backing Up Assets, Modification Cancelled.");	
 		$flag_success = 0;
 	}
 }
+
+#	Revise Data File if Required
+
+if (!$flag_exit) {
+	if ($flag_update_datafile) {
+		writelog("Updating data file from $datafile_version to " . PROGRAM_VERSION,TRACE);	
+		$stored_backuproot = $backuproot;
+		if (writeDataFile($pathname_datafile)) {
+			writelog("Data File Updated OK",DEBUG);
+		} else {
+			writelog("ERROR: Could not update data file.");
+		}
+	}
+}
+
 
 #	Report Status
 
 if ($flag_success == $mod_file_count) {
 	if ($flag_assets_already_patched ==  $mod_file_count) {
-		writelog(MSG_MOD_ALREADY_PATCHED);
+		writelog("Modification Already In Place!");
 	} else {
-		writelog(MSG_MOD_OK);
+		writelog("Modification Successful!");
 	}
 	writelog();
-	writelog(MSG_UNINSTALL);
-	writelog(TIP_MANUAL);
-	writelog(TIP_RESTORE);
-	writelog(TIP_REPAIR);
+	writelog("To restore original assets:");
+	showTips();
 	writelog();
 } else {
-	if ($flag_exit) {
-		# 	Exiting
-	} else {
-		writelog(MSG_MOD_FAIL);
+	if (!$flag_exit) {
+		writelog("Modification Failed");
 		writelog();
-		writelog(MSG_FAIL_TIP1);
-		writelog(MSG_FAIL_TIP2);
-		writelog(TIP_MANUAL);
-		writelog(TIP_RESTORE);
-		writelog(TIP_REPAIR);
+		writelog("Before attempting to run this again,");
+		writelog("you may need to restore original assets:");
+		showTips();
 		writelog();
 	}
 }
@@ -814,7 +864,7 @@ if ($flag_success == $mod_file_count) {
 $finish_run_time = time;
 $elapsed_run_time = $finish_run_time - $start_run_time;
 
-writelog("Execution time was $elapsed_run_time second(s)");
+writelog("Execution time was $elapsed_run_time seconds(s)");
 writelog("Program Completed");
 
 #-----------------------------------------------------------
@@ -837,12 +887,12 @@ sub writelog{
 		$flag_show_message = 0;
 
 		if ($debug > 0) {
-			if (($debug == DEBUG) && ($debug_message == DEBUG)) {
+			if (($debug >= DEBUG) && ($debug_message == DEBUG)) {
 				$prefix_message = "DEBUG";
 				$flag_show_message = 1;
 			}
 
-			if (($debug == TRACE) && ($debug_message == TRACE)) {
+			if (($debug >= TRACE) && ($debug_message == TRACE)) {
 				$prefix_message = "TRACE";
 				$flag_show_message = 1;
 			}
@@ -874,7 +924,7 @@ sub verifyAssetFile{
 
  	if (open(my $fh, '<', $pathname)) {
 		binmode($fh);
-		writelog("'$pathname' is open in binary mode",TRACE);
+		writelog("'$pathname' is open in binary mode as READ ONLY",TRACE);
 		read($fh, $buffer, 48);
 		writelog("'$pathname' is closed",TRACE);	
 		close($fh);
@@ -978,9 +1028,9 @@ sub isPatched{
 		writelog("Buffering data $read_buffer_size bytes",DEBUG);
 	}
 
- 	if (open(my $fh, '+<', $pathname)) {
+ 	if (open(my $fh, '<', $pathname)) {
 		binmode($fh);
-		writelog("'$pathname' is open in binary mode",TRACE);
+		writelog("'$pathname' is open in binary mode as READ ONLY",TRACE);
 
 		$retval = 0;
 
@@ -1126,7 +1176,7 @@ sub patchFile{
 
  	if (open(my $fh, '+<', $pathname)) {
 		binmode($fh);
-		writelog("'$pathname' is open in binary mode",TRACE);
+		writelog("'$pathname' is open in binary mode as READ/WRITE",TRACE);
 		$retval = 0;
 
 		while( $flag_loop) {
@@ -1257,7 +1307,7 @@ sub restoreAssets{
 		writelog("Backup files are present.",TRACE);	
 	} else {
 		writelog("One or more backup files are missing!");
-		writelog(REPAIR_ADVICE_MUST);
+		writelog("You will need to perform a repair from the launcher to restore the originals.");
 		return $retval;
 	}
 
@@ -1276,7 +1326,7 @@ sub restoreAssets{
 
 	if ($tempret > 0) {
 		writelog("One or more backups are patched versions!");
-		writelog(REPAIR_ADVICE_MUST);
+		writelog("You will need to perform a repair from the launcher to restore the originals.");
 		return $retval;
 	} else {
 		writelog("Backup files are not patched",DEBUG);
@@ -1301,11 +1351,11 @@ sub restoreAssets{
 	}
 
 	if ($retval == $mod_file_count) {
-		writelog(MSG_RESTORE_OK);
+		writelog("Restore Successful!");
 		$retval = 1;
 	} else {
-		writelog(MSG_RESTORE_FAIL);
-		writelog(REPAIR_ADVICE_MAY);
+		writelog("Restore Failed!");
+		writelog("You may need to perform a repair from the launcher to restore the originals.");
 		$retval = 0;
 	}
 
@@ -1320,68 +1370,107 @@ sub readDataFile{
 	my $retval = -1;
 	my $fh;
 	my @content;
+	my $datafile_name;
+	my $datafile_marker;
+	my $flag_default = 1;
 
 	return $retval unless defined $pathname;
 	
 	writelog("readDataFile '$pathname'",TRACE);
 
 	if (open($fh, "<", $pathname)) {
-		writelog("'$pathname' is open",TRACE);
+		writelog("'$pathname' is open as READ ONLY",TRACE);
 		@content = <$fh>;
 		writelog("'$pathname' is closed",TRACE);	
 		close($fh);
 
 		$buffer = $content[0];		# PROGRAM NAME
 		chop $buffer;
+		$datafile_name = $buffer;
 
-		if ($buffer ne PROGRAM_NAME) {
-			writelog("WARNING: Data file name does not match! ($buffer)",DEBUG);
+		if ($datafile_name ne PROGRAM_NAME) {
+			writelog("WARNING: Data file name does not match! ($datafile_name)",DEBUG);
 		}
 
 		$buffer = $content[1];		# VERSION
 		chop $buffer;
+		$datafile_version = $buffer;
 
-		writelog("Data File created with version $buffer",TRACE);
+		writelog("Data File created with version $datafile_version",TRACE);
 
 		$buffer = $content[2];		# "DATA FILE"
 		chop $buffer;
+		$datafile_marker = $buffer;
 
 		if ($buffer ne "DATA FILE") {
 			writelog("WARNING: Data file chunk missing!",DEBUG);
 		}
 
-		$buffer = $content[3];		# gameroot
-		chop $buffer;
-
-		#	 not used right now
+		#	Handle Specific Versions
 		
-		$buffer = $content[4];		# Assets Patch
-		chop $buffer;
+		switch ($datafile_version) {
+			case "201511161613"
+				{
+					$buffer = $content[3];		# gameroot
+					chop $buffer;
+					$stored_gameroot = $buffer;
 
-		$stored_version_patch = $buffer;
+					$buffer = $content[4];		# Assets Patch
+					chop $buffer;
+					$stored_version_patch = $buffer;
 
-		$buffer = $content[5];		# Assets Data
-		chop $buffer;
+					$buffer = $content[5];		# Assets Data
+					chop $buffer;
+					$stored_version_data = $buffer;
 
-		$stored_version_data = $buffer;
+					$buffer = $content[6];		# Republic Asset Hash
+					chop $buffer;
+					$stored_hash_asset_republic = $buffer;
 
+					$buffer = $content[7];		# Imperial Asset Hash
+					chop $buffer;
+					$stored_hash_asset_imperial = $buffer;
 
-		$buffer = $content[6];		# Republic Asset Hash
-		chop $buffer;
+					$buffer = $content[8];		# Is Patched
+					chop $buffer;
+					$stored_is_patched = $buffer;
+	
+					$flag_default = 0;
+					$flag_update_datafile = 1;
+				}
+		}
 
-		$stored_hash_asset_republic = $buffer;
+		#	Standard Version 
 
+		if ($flag_default) {
+			$buffer = $content[3];		# gameroot
+			chop $buffer;
+			$stored_gameroot = $buffer;
 
-		$buffer = $content[7];		# Imperial Asset Hash
-		chop $buffer;
+			$buffer = $content[4];		# backuproot
+			chop $buffer;
+			$stored_backuproot = $buffer;
 
-		$stored_hash_asset_imperial = $buffer;
+			$buffer = $content[5];		# Assets Patch
+			chop $buffer;
+			$stored_version_patch = $buffer;
 
+			$buffer = $content[6];		# Assets Data
+			chop $buffer;
+			$stored_version_data = $buffer;
 
-		$buffer = $content[8];		# Is Patched
-		chop $buffer;
+			$buffer = $content[7];		# Republic Asset Hash
+			chop $buffer;
+			$stored_hash_asset_republic = $buffer;
 
-		$stored_is_patched = $buffer;
+			$buffer = $content[8];		# Imperial Asset Hash
+			chop $buffer;
+			$stored_hash_asset_imperial = $buffer;
+
+			$buffer = $content[9];		# Is Patched
+			chop $buffer;
+			$stored_is_patched = $buffer;
+		}
 	
 		$retval = 1;		
 		
@@ -1389,6 +1478,26 @@ sub readDataFile{
 		writelog("Could not open '$pathname'",TRACE);	
 	}
 	
+	if ($debug >= TRACE) {
+		if ($retval) {
+			writelog("***",TRACE);
+			writelog("DATA FILE READ at '$pathname':",TRACE);
+			writelog(" Data File Version: $datafile_version",TRACE);
+			writelog("     Game Location: $stored_gameroot",TRACE);
+			writelog("   Backup Location: $stored_backuproot",TRACE);
+			writelog("       Asset Patch: $stored_version_patch",TRACE);
+			writelog("        Asset Data: $stored_version_data",TRACE);
+			writelog("      Republic MD5: $stored_hash_asset_republic",TRACE);
+			writelog("      Imperial MD5: $stored_hash_asset_imperial",TRACE);
+			writelog("Assets Are Patched: $stored_is_patched",TRACE);
+			writelog("***",TRACE);
+		} else {
+			writelog("***",TRACE);
+			writelog("DATA FILE FAILED READ at '$pathname':",TRACE);
+			writelog("***",TRACE);
+		}
+	}
+
 
 	return $retval;
 }
@@ -1411,11 +1520,12 @@ sub writeDataFile{
 	}
 
 	if (open($fh, ">", $pathname)) {
-		writelog("'$pathname' is open",TRACE);
+		writelog("'$pathname' is open as WRITE",TRACE);
 		print $fh PROGRAM_NAME . "\n";
 		print $fh PROGRAM_VERSION . "\n";
 		print $fh "DATA FILE\n";
 		print $fh "$gameroot\n";
+		print $fh "$backuproot\n";
 		print $fh "$stored_version_patch\n";
 		print $fh "$stored_version_data\n";
 		print $fh "$stored_hash_asset_republic\n";
@@ -1447,7 +1557,7 @@ sub getAssetVersion{
 	writelog("getAssetVersion using '$pathname'",TRACE);
 
 	if (open($fh, "<", $pathname)) {
-		writelog("'$pathname' is open",TRACE);
+		writelog("'$pathname' is open as READ ONLY",TRACE);
 		$buffer = <$fh>;
 		chomp $buffer;
 		writelog("'$pathname' is closed",TRACE);	
@@ -1482,7 +1592,7 @@ sub getAssetVersion{
 #-----------------------------------------------------------
 sub getFileHash{
 	my $pathname = shift;
-	my $hash = "ERROR";
+	my $hash = INVALID_HASH;
 	my $fh;
 
 	return $hash unless defined $pathname;
@@ -1491,7 +1601,7 @@ sub getFileHash{
 
 	if (open($fh, "<", $pathname)) {
 		binmode($fh);
-		writelog("'$pathname' is open in binary mode.",TRACE);
+		writelog("'$pathname' is open in binary mode as READ ONLY",TRACE);
 		$hash = Digest::MD5->new->addfile($fh)->hexdigest;
 		writelog("'$pathname' is closed",TRACE);	
 		close($fh);
@@ -1510,6 +1620,254 @@ sub showVersion{
 	exit(0);
 }
 
+#-----------------------------------------------------------
+# Get Asset Hashes
+#-----------------------------------------------------------
+sub getAssetHashes{
+	my $retval = 0;
+	my $tempval = 0;
+	my $temp_hash_asset_republic;
+	my $temp_hash_asset_imperial;
+
+	writelog("getAssetHashes Getting MD5 hashes for assets.",TRACE);
+	writelog("Getting MD5 hash for $name_republic asset file.",TRACE);
+
+	$temp_hash_asset_republic = getFileHash($pathname_republic_asset);
+	if ($temp_hash_asset_republic eq INVALID_HASH) {
+		writelog("ERROR: Failed to get MD5 hash for $name_republic asset file.",TRACE);
+	} else {
+		$tempval++;
+	}
+	
+	writelog("Getting MD5 hash for $name_imperial asset file.",TRACE);	
+	$temp_hash_asset_imperial = getFileHash($pathname_imperial_asset);
+	if ($temp_hash_asset_imperial eq INVALID_HASH) {
+		writelog("ERROR: Failed to get MD5 hash for $name_imperial asset file.",TRACE);
+	} else {
+		$tempval++;
+	}	
+
+	if ($tempval == $mod_file_count) {
+		$retval = 1;
+		$hash_asset_republic = $temp_hash_asset_republic;
+		$hash_asset_imperial = $temp_hash_asset_imperial;
+
+	} else {
+		$retval = 0;
+	}
+
+	return $retval;
+
+}
+
+
+#-----------------------------------------------------------
+# Compare Assets and Backups
+#-----------------------------------------------------------
+sub compareAssetsAndBackups{
+	my $retval = 0;
+	my $counter = 0;
+
+	my $temp_hash_backup_republic = INVALID_HASH;
+	my $temp_hash_backup_imperial = INVALID_HASH;
+	my $temp_hash_asset_republic  = INVALID_HASH;
+	my $temp_hash_asset_imperial = INVALID_HASH;
+
+	writelog("compareAssetsAndBackups",TRACE);
+
+	$temp_hash_backup_republic = getFileHash($pathname_republic_backup);
+	$temp_hash_backup_imperial = getFileHash($pathname_imperial_backup);
+
+	$temp_hash_asset_republic = getFileHash($pathname_republic_asset);
+	$temp_hash_asset_imperial = getFileHash($pathname_imperial_asset);
+
+	
+	if ($temp_hash_backup_republic eq $temp_hash_asset_republic) {
+		if ($temp_hash_asset_republic ne INVALID_HASH) {
+			$counter++;
+		}
+	}
+
+	if ($temp_hash_backup_imperial eq $temp_hash_asset_imperial) {
+		if ($temp_hash_asset_imperial ne INVALID_HASH) {
+			$counter++;
+		}
+	}
+	
+	if ($counter == $mod_file_count) {
+		$retval = 1;
+	}
+		
+	return $retval;
+
+}
+
+#-----------------------------------------------------------
+# verifyAssetFiles (by Hash)
+#-----------------------------------------------------------
+sub verifyAssetFiles{
+	my $retval = 0;
+
+	writelog("verifyAssetFiles",TRACE);
+
+	if (getAssetHashes()) {
+		if ($stored_hash_asset_republic ne INVALID_HASH) {
+			if ($stored_hash_asset_republic eq $hash_asset_republic) {
+				$retval++
+			}
+		}
+
+		if ($stored_hash_asset_imperial ne INVALID_HASH) {
+			if ($stored_hash_asset_imperial eq $hash_asset_imperial) {
+				$retval++
+			}
+		}
+	}
+
+	return $retval;
+}
+
+
+#-----------------------------------------------------------
+# Show Tips
+#-----------------------------------------------------------
+sub showTips{
+	writelog("* Manually copy assets from backup folder to game assets folder");
+	writelog("* Run this tool with -restore option");
+	writelog("* Perform a repair from the launcher");
+	return;
+}
+
+#-----------------------------------------------------------
+# Command: Restore Operation
+#-----------------------------------------------------------
+sub optRestoreOperation{
+	if ($flag_backups_exist < $mod_file_count) {
+		writelog("Restore function is not available because backups are not present!");
+		writelog();
+		if ($no_backup) {
+			writelog("The -nobackup flag is enabled.");
+		}
+		writelog();
+		writelog("Possible Causes:");
+		writelog("* The -nobackup flag was used previously.");
+		writelog("* The backup function failed.");
+		writelog();
+		writelog("If you wish to restore your asset files you will need to:");
+		writelog("* Copy them from your own backup");
+		writelog("* Perform a repair in the $game_name launcher");
+	} else {
+
+		# 	Determine to see if a restore is required
+
+		$reason = "Unknown";
+
+		if ($flag_data_file_read) {
+			
+			# 	If we have the stored asset checksums, verify them
+
+			$flag_asset_checksum_match = verifyAssetFiles();
+
+			if ($flag_asset_checksum_match == $mod_file_count) {
+				$reason = "Asset checksums already match the original files.";
+				$flag_skip_restore = 1;
+			}
+		}
+
+		if ($flag_skip_restore == 0) {
+
+			# 	See if the assets are patched
+
+			$flag_assets_already_patched = assetsPatched();
+
+			if ($flag_assets_already_patched == 0) {
+				$reason = "Asset files have not been patched.";
+				$flag_skip_restore = 1;
+			}
+		}
+
+		if ($flag_skip_restore == 0) {
+	
+			#	Last restore, do md5 comparisons of the asset and backup files,
+			#	if they match, there's no point
+
+			if (compareAssetsAndBackups()) {
+				$reason = "Asset and backup files are identical.";
+				$flag_skip_restore = 1;
+			}
+		}
+
+		if ($flag_skip_restore) {
+			writelog("Restore not required: $reason");
+		} else {
+			if (restoreAssets()) {
+				$flag_assets_verified = 0;
+				$reason = "Unknown";
+
+				writelog("Determining success of restoration",TRACE);
+
+				if ($flag_data_file_read) {
+					writelog("Verifying Assets for Data File",TRACE);
+	
+					$flag_asset_checksum_match = verifyAssetFiles();
+	
+					if ($flag_asset_checksum_match == $mod_file_count) {
+						writelog("Asset hashes match the originals",TRACE);
+						$stored_is_patched = 0;
+						$flag_assets_verified = $flag_assets_verified + $flag_asset_checksum_match;
+					} else {
+						$reason = "Assets may still be patched!  Checksums do not match.";
+					}
+				} else {
+					writelog("No Data File",TRACE);
+				}
+
+				$flag_assets_already_patched = assetsPatched();
+
+				if ($flag_assets_already_patched == $mod_file_count) {
+					$reason = "Assets are still patched!";
+					$stored_is_patched = 1;
+					$flag_assets_verified = 0;
+				} else {
+					if ($flag_assets_already_patched == 0 ) {
+						$flag_assets_verified = $flag_assets_verified + $mod_file_count;
+					}
+					if ($flag_assets_already_patched == 1 ) {
+						$flag_assets_verified = $flag_assets_verified + 1;
+						$reason = "At least one asset is still patched!";
+					}
+					$stored_is_patched = 0;
+				}
+
+				if ($flag_assets_verified > 0) {
+					writelog("Assets Verified, Certainty is " . $flag_assets_verified * 25 . "%");
+				} else {
+					writelog("WARNING: $reason");
+				}
+	
+				if ($no_datafile > 0) {
+					#	No Data File
+				} else {
+					writelog("Updating Data File '$pathname_datafile'",TRACE);
+	
+					$retval = writeDataFile($pathname_datafile);
+	
+					if ($retval) {
+						writelog("Data File Written OK",DEBUG);
+						$flag_update_datafile = 0;
+					} else {
+						writelog("ERROR: Could not write data file.");
+					}
+				}
+			} else {
+				writelog("restoreAssets failed",TRACE);
+			}
+		}
+		
+	}
+	$flag_exit = 1;
+	return;
+}
 
 #-----------------------------------------------------------
 # Show Help
@@ -1519,11 +1877,13 @@ sub showHelp{
 	writelog("in the game '$game_name'.");
 	writelog();
 	writelog();
-	writelog("Commands:");	
+	writelog("Commands and Options:");	
 	writelog();
-	writelog("-restore 		restore from backups");
+	writelog("-restore 		restore from backups (invalid if -nobackup is used)");
+	writelog("-nobackup 		don't use backups");
+	writelog("-nodatafile 		don't use data file");
 	writelog("-version		show version");
- 	writelog("-debug			show debug messages");
+ 	writelog("-debug / -trace		show debug / trace messages");
 	writelog("-help			this screen");
 	writelog();
 	writelog();
