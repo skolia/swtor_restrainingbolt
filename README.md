@@ -150,7 +150,7 @@ The switch ```-debug``` will enable debug level messages.    Any DEBUG messages 
 Restraining Bolt v201511181736
 Star Wars: The Old Republic (Ship Droid Mod)
 
-[DEBUG] Attempting to read data file at 'C:\Users\lt\AppData\Local\SWTOR_MOD\swtor_restrainingbolt.dat'
+[DEBUG] Attempting to read data file at 'C:\Temp\SWTOR_MOD\swtor_restrainingbolt.dat'
 [DEBUG] Checking stored backup root
 WARNING: Game location not detected or specified, using current folder.
 [DEBUG] '.' is the current folder.
