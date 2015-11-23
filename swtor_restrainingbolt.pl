@@ -16,7 +16,7 @@ use File::Spec;
 use Win32::TieRegistry;
 
 use constant{
-	PROGRAM_VERSION => "201511181736",
+	PROGRAM_VERSION => "201511221732",
 	PROGRAM_SHORT_NAME => "restrainingbolt",
 	PROGRAM_NAME => "Restraining Bolt",
 	PROGRAM_DESCRIPTION => "Ship Droid Mod",
@@ -27,6 +27,7 @@ use constant{
 	INVALID_HASH => "***",
 	NO_DATA_ALPHA => "",
 	NO_DATA_NUMERIC => -1,
+	IS_SEARCH_ONLY => "*SEARCH*ONLY*",
 
 	#	Defaults
 
@@ -42,7 +43,6 @@ use constant{
 	FOLDER_DATA => "SWTOR_MOD",
 	DEBUG => 1,
 	TRACE => 2,
-	MOD_FILE_COUNT => 2,
 	DATA_FILE => "swtor_restrainingbolt.dat",
 
 	#	SWTOR
@@ -50,19 +50,13 @@ use constant{
 	SWTOR_ASSET_MAGIC_LEN => 3,
 	SWTOR_ASSET_MAGIC => "MYP",
 	SWTOR_ASSETS_FOLDER => "Assets",
-	SWTOR_NAME_REPUBLIC => "Republic",
-	SWTOR_NAME_IMPERIAL => "Imperial",
-	SWTOR_ASSET_VERSION_FILENAME => "assets_swtor_main_version.txt",
-	SWTOR_ASSET_FILE_REPUBLIC => "swtor_en-us_cnv_comp_chars_rep_1",
-	SWTOR_ASSET_FILE_IMPERIAL => "swtor_en-us_cnv_comp_chars_imp_1",
-	SWTOR_ASSET_SOURCE_REPUBLIC => "c2n2",
-	SWTOR_ASSET_SOURCE_IMPERIAL => "2vr8",
+	SWTOR_ASSET_VERSION_FILENAME => "assets_swtor_main_version.txt",	# Some SWTOR Installs don't have this.
+	SWTOR_MAIN_FILE => "swtor\\retailclient\\swtor.exe",			# Fallback Versioning File
 	SWTOR_FILE_EXTENSION => "tor",
 	SWTOR_X64_REGISTRY_KEY => "HKEY_LOCAL_MACHINE\\SOFTWARE\\Wow6432Node\\BioWare\\Star Wars-The Old Republic",
 	SWTOR_X86_REGISTRY_KEY => "HKEY_LOCAL_MACHINE\\SOFTWARE\\BioWare\\Star Wars-The Old Republic",
 	SWTOR_REGISTRY_VALUE => "Install Dir",
-	REPLACE_REPUBLIC => "XXXX",
-	REPLACE_IMPERIAL => "XXXX",
+	SWTOR_ASSET_REPLACE_WTIH => "XXXX",
 
 	#	Data Buffering
 
@@ -82,7 +76,7 @@ my $debug;
 
 my $use_jumpback = DEFAULT_OPT_USE_JUMPBACK;
 my $no_datafile = DEFAULT_OPT_NO_DATA_FILE;
-my $no_backup = DEFAULT_OPT_NO_BACKUP;				#	Not Implemented
+my $no_backup = DEFAULT_OPT_NO_BACKUP;			
 
 my $backuproot;
 my $gameroot;
@@ -97,17 +91,21 @@ my $assetpathname;
 my $backuppathname;
 my $active_path;
 
+my %asset_files;
+my %hash_assets;
+my %stored_hash_assets;
+my %flag_asset_status;
+my %flag_backup_status;
+my %flag_patch_status;
+my @stored_asset_files;
+
 my $asset_version_patch;
 my $asset_version_data;
-my $hash_asset_republic;
-my $hash_asset_imperial;
 
 my $datafile_version = PROGRAM_VERSION;
 
 my $stored_version_patch;
 my $stored_version_data;
-my $stored_hash_asset_republic;
-my $stored_hash_asset_imperial;
 my $stored_is_patched;
 my $stored_gameroot;
 my $stored_backuproot;
@@ -118,28 +116,25 @@ my $retcode;
 my $buffer;
 my $reason;
 
-my $pathname_republic_asset;
-my $pathname_imperial_asset;
-my $pathname_republic_backup;
-my $pathname_imperial_backup;
+my $pathname_root_assets;
+my $pathname_root_backup;
+
+my $pathname_asset;
+my $pathname_backup;
 my $pathname_datafile;
 my $pathname_asset_version;
+my $pathname_main_exe;
 
-my $search_republic;
-my $search_imperial;
-
-my $replace_republic;
-my $replace_imperial;
+my $asset_replace;
 
 my $game_name;
 
+my $file_pathname;
 my $file_asset_version;
-my $file_republic_assets;
-my $file_imperial_assets;
 my $file_data;
 
-my $name_republic;
-my $name_imperial;
+my $item_label;
+my $item_searchfor;
 
 my $ext_assets;
 
@@ -179,13 +174,64 @@ my $flag_restore_operation = 0;
 my $flag_exit = 0;
 my $flag_trace = -1;
 
+my $flag_valid_data_file = 0;
 my $flag_assets_exist = 0;
 my $flag_backups_exist = 0;
 
-my $local_temp = $ENV{TEMP};
-my $local_appdata = $ENV{LOCALAPPDATA};
+my $local_temp;
+my $local_appdata;
 
-my $mod_file_count = MOD_FILE_COUNT;
+my $mod_file_count;
+
+
+#-----------------------------------------------------------
+# Program Start
+#-----------------------------------------------------------
+
+$start_run_time = time;
+
+#	Initialize
+
+$file_pathname = "";
+
+$pathname_root_assets = "";
+$pathname_root_backup = "";
+
+$pathname_asset = "";
+$pathname_backup = "";
+
+$local_temp = $ENV{TEMP};
+$local_appdata = $ENV{LOCALAPPDATA};
+
+%hash_assets = ();
+%stored_hash_assets = ();
+%flag_asset_status = ();
+%flag_backup_status = ();
+%flag_patch_status = ();
+@stored_asset_files = ();
+
+#	Setup Arrays and Hashes
+
+%asset_files = (
+	# File, Label, Search List
+	'swtor_en-us_cnv_comp_chars_rep_1' => [ 'Republic', 'c2n2' ],
+	'swtor_en-us_cnv_comp_chars_imp_1' => [ 'Imperial', '2vr8' ],
+	'swtor_en-us_cnv_misc_1' => [ 'Misc', 'c2n2,2vr8' ],
+);
+
+$mod_file_count = 0;
+foreach my $file_asset (keys %asset_files) {
+	$mod_file_count++;
+	$hash_assets{$file_asset} = INVALID_HASH;
+	$stored_hash_assets{$file_asset} = INVALID_HASH;
+	$flag_asset_status{$file_asset} = NO_DATA_NUMERIC;
+	$flag_backup_status{$file_asset} = NO_DATA_NUMERIC;
+	$flag_patch_status{$file_asset} = NO_DATA_NUMERIC;
+}
+
+#	Set Defaults
+
+$active_path = File::Spec->curdir();
 
 $gameroot = DEFAULT_GAME_ROOT;
 $backuproot = DEFAULT_BACKUP_ROOT;
@@ -196,21 +242,12 @@ $folder_backup  = FOLDER_BACKUP;
 $folder_data = FOLDER_DATA;
 $folder_assets = SWTOR_ASSETS_FOLDER;
 
-$file_republic_assets = SWTOR_ASSET_FILE_REPUBLIC;
-$file_imperial_assets = SWTOR_ASSET_FILE_IMPERIAL;
 $file_asset_version = SWTOR_ASSET_VERSION_FILENAME;
 $file_data = DATA_FILE;
 
-$search_republic = SWTOR_ASSET_SOURCE_REPUBLIC;
-$search_imperial = SWTOR_ASSET_SOURCE_IMPERIAL;
-
-$replace_republic = REPLACE_REPUBLIC;
-$replace_imperial = REPLACE_IMPERIAL;
+$asset_replace = SWTOR_ASSET_REPLACE_WTIH;
 
 $ext_assets = SWTOR_FILE_EXTENSION;
-
-$name_republic = SWTOR_NAME_REPUBLIC;
-$name_imperial = SWTOR_NAME_IMPERIAL;
 
 $game_name = GAME_NAME;
 
@@ -221,8 +258,6 @@ $backuppathname = NO_DATA_ALPHA;
 
 $stored_version_patch = NO_DATA_NUMERIC;
 $stored_version_data = NO_DATA_NUMERIC;
-$stored_hash_asset_republic = INVALID_HASH;
-$stored_hash_asset_imperial = INVALID_HASH;
 $stored_is_patched = NO_DATA_NUMERIC;
 $stored_gameroot = NO_DATA_ALPHA;
 $stored_backuproot = NO_DATA_ALPHA;
@@ -230,14 +265,7 @@ $stored_backuproot = NO_DATA_ALPHA;
 $retval = 0;
 $retcode = 0;
 
-
-#-----------------------------------------------------------
-# Program Start
-#-----------------------------------------------------------
-
-$start_run_time = time;
-
-$active_path = File::Spec->curdir();
+#	Start
 
 writelog(PROGRAM_NAME . " v" . PROGRAM_VERSION);
 writelog(GAME_NAME . " (" . PROGRAM_DESCRIPTION . ")");
@@ -256,6 +284,14 @@ if (READ_BUFFER_SIZE > 0) {
 if ($flag_debug_no_op) {
 	writelog("NO ACTUAL PATCHES WILL OCCUR",DEBUG);
 }
+
+if ($mod_file_count > 0) {
+	writelog("This mod will update $mod_file_count asset files",DEBUG);
+} else {
+	writelog("ERROR: No asset files defined!");
+	$flag_exit = 1;
+}
+
 
 #	Locate SWTOR Install (command line can override)
 
@@ -457,20 +493,13 @@ if ($flag_using_default_backuproot) {
 
 writelog("Building Asset and Backup Paths",TRACE);
 
-$pathname_republic_asset = File::Spec->catfile($gameroot, $folder_assets);
-$pathname_republic_asset = File::Spec->catfile($pathname_republic_asset, "$file_republic_assets.$ext_assets");
-
-$pathname_republic_backup = File::Spec->catfile($backuproot, $folder_backup);
-$pathname_republic_backup = File::Spec->catfile($pathname_republic_backup, "$file_republic_assets.$ext_assets");
-
-$pathname_imperial_asset = File::Spec->catfile($gameroot, $folder_assets);
-$pathname_imperial_asset = File::Spec->catfile($pathname_imperial_asset, "$file_imperial_assets.$ext_assets");
-
-$pathname_imperial_backup = File::Spec->catfile($backuproot, $folder_backup);
-$pathname_imperial_backup = File::Spec->catfile($pathname_imperial_backup, "$file_imperial_assets.$ext_assets");
+$pathname_root_assets = File::Spec->catfile($gameroot, $folder_assets);
+$pathname_root_backup = File::Spec->catfile($backuproot, $folder_backup);
 
 $pathname_asset_version = File::Spec->catfile($gameroot, $folder_assets);
 $pathname_asset_version = File::Spec->catfile($pathname_asset_version, $file_asset_version);
+
+$pathname_main_exe  = File::Spec->catfile($gameroot, SWTOR_MAIN_FILE);
 
 #	Status (Debug)
 
@@ -505,7 +534,17 @@ if (-e $pathname_asset_version) {
 		writelog("Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",TRACE);
 	}
 } else {
-	writelog("ERROR: Could not locate asset version file.");
+	writelog("WARNING: Could not locate asset version file.");
+	writelog("Falling back to alternate versioning from $pathname_main_exe.",TRACE);
+	if (-e $pathname_main_exe) {
+		my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat($pathname_main_exe);		
+		my $main_hash = getFileHash($pathname_main_exe);
+
+		$asset_version_patch = $atime;
+		$asset_version_data = $main_hash;
+	} else {
+		writelog("No versioning available.");
+	}
 }
 
 if ($no_datafile > 0) {
@@ -536,12 +575,23 @@ if ($no_datafile > 0) {
 
 #	Check if backups exist
 
-if (-e $pathname_republic_backup) {
-	$flag_backups_exist++;
-}
+if ($flag_exit) {
+	# 	Exiting
+} else {
+	writelog("Checking For Backups",DEBUG);
+	foreach my $file_asset (keys %asset_files) {
+		$file_pathname = File::Spec->catfile($pathname_root_backup, $file_asset);
+		$file_pathname = $file_pathname . ".$ext_assets";
 
-if (-e $pathname_imperial_backup) {
-	$flag_backups_exist++;
+		if (-e $file_pathname) {
+			writelog("Backup File: '$file_pathname' Exists",DEBUG);
+			$flag_backup_status{$file_asset} = 1;
+			$flag_backups_exist++;
+		} else {
+			writelog("Backup File: '$file_pathname' Not Present",DEBUG);
+			$flag_backup_status{$file_asset} = 0;
+		}
+	}
 }
 
 #	Run Restore Operation (if selected)
@@ -552,35 +602,24 @@ if ($flag_restore_operation) {
 
 #	Verify Assets
 
-writelog("Verifying $game_name Assets");
-
-writelog("$name_republic Asset Pathname: $pathname_republic_asset",DEBUG);
-writelog("$name_republic Backup Pathname: $pathname_republic_backup",DEBUG);
-writelog("$name_imperial Asset Pathname: $pathname_imperial_asset",DEBUG);
-writelog("$name_imperial Backup Pathname: $pathname_imperial_backup",DEBUG);
-
-if (-e $pathname_republic_asset) {
-	if (verifyAssetFile($pathname_republic_asset)) {
-		$flag_assets_exist++ 
-	} else {
-		writelog("ERROR: $name_republic asset file is invalid.");
-		$flag_exit = 1;
-	}
+if ($flag_exit) {
+	#	Exiting
 } else {
-	writelog("ERROR: Could not find $name_republic asset file.");
-	$flag_exit = 1;
-}
+	writelog("Verifying $game_name Assets");
 
-if (-e $pathname_imperial_asset) {
-	if (verifyAssetFile($pathname_imperial_asset)) {
-		$flag_assets_exist++ 
-	} else {
-		writelog("ERROR: $name_imperial asset file is invalid.");
-		$flag_exit = 1;
+	foreach my $file_asset (keys %asset_files) {
+		$file_pathname = File::Spec->catfile($pathname_root_assets, $file_asset);
+		$file_pathname = $file_pathname . ".$ext_assets";
+
+		if (-e $file_pathname) {
+			writelog("Asset File: '$file_pathname' Exists",DEBUG);
+			$flag_asset_status{$file_asset} = 1;
+			$flag_assets_exist++;
+		} else {
+			writelog("Asset File: '$file_pathname' Not Present",DEBUG);
+			$flag_asset_status{$file_asset} = 0;
+		}
 	}
-} else {
-	writelog("ERROR: Could not find $name_imperial asset file.");
-	$flag_exit = 1;
 }
 
 if ($flag_assets_exist == $mod_file_count) {
@@ -588,11 +627,47 @@ if ($flag_assets_exist == $mod_file_count) {
 } else {
 	writelog("Could not locate one or more asset files.");
 	writelog("Modification Cancelled");
+	foreach my $file_asset (keys %asset_files) {
+		$item_label = $asset_files{$file_asset}->[0];
+
+		if ($flag_asset_status{$file_asset} == 0) {
+			writelog("Could not '$item_label' Asset: $file_asset");
+		}
+	}
 	$flag_exit = 1;
 }
 
 if ($flag_assets_already_patched == $mod_file_count) {
 	$flag_exit = 1;
+}
+
+#	Turn off asset version checking if data is not present or incomplete
+
+if ($asset_version_patch eq NO_DATA_NUMERIC) {
+	$flag_skip_asset_version_check = 1;
+}
+
+if ($asset_version_data eq NO_DATA_NUMERIC) {
+	$flag_skip_asset_version_check = 1;
+}
+
+if ($stored_version_patch eq NO_DATA_NUMERIC) {
+	$flag_skip_asset_version_check = 1;
+}
+
+if ($stored_version_data eq NO_DATA_NUMERIC) {
+	$flag_skip_asset_version_check = 1;
+}
+
+if (!$flag_exit) {
+	if ($flag_assets_already_patched) {
+	} else {
+		if (getAssetHashes()) {
+				writelog("Checksums are loaded!");
+			} else {
+				writelog("ERROR: Could not get asset checksums!");
+		}
+	}
 }
 
 if (!$flag_exit) {
@@ -602,47 +677,34 @@ if (!$flag_exit) {
 
 			if ($flag_new_data_file == 1) {
 				writelog("New Data.",DEBUG);
-			writelog("Current Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
+				writelog("Current Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
 			} else {
 				writelog("Updating Data.",DEBUG);			
 				writelog(" Stored Asset Version is Patch: $stored_version_patch; Data: $stored_version_data",DEBUG);
 				writelog("Current Asset Version is Patch: $asset_version_patch; Data: $asset_version_data",DEBUG);
 			}
 
-			$hash_asset_republic = INVALID_HASH;
-			$hash_asset_imperial = INVALID_HASH;
+			$stored_version_patch = $asset_version_patch;
+			$stored_version_data = $asset_version_data;
 
-			if (getAssetHashes()) {
-				writelog("$name_republic Asset Hash: $hash_asset_republic",DEBUG);
-				writelog("$name_imperial Asset Hash: $hash_asset_imperial",DEBUG);
-
-				$stored_version_patch = $asset_version_patch;
-				$stored_version_data = $asset_version_data;
-				$stored_hash_asset_republic = $hash_asset_republic;
-				$stored_hash_asset_imperial = $hash_asset_imperial;
-
-				if ($flag_assets_already_patched == $mod_file_count) {
-					$stored_is_patched = 1;
-				} else {
-					$stored_is_patched = 0;
-				}
-		
-				if ($no_datafile > 0) {
-					#	No Data File
-				} else {
-					$retval = writeDataFile($pathname_datafile);
-	
-					if ($retval) {
-						writelog("Data File Written OK",DEBUG);
-						$flag_update_datafile = 0;
-					} else {
-						writelog("ERROR: Could not write data file.");
-					}
-				}
+			if ($flag_assets_already_patched == $mod_file_count) {
+				$stored_is_patched = 1;
 			} else {
-				writelog("ERROR: Could not get updated checksums!");
+				$stored_is_patched = 0;
 			}
-
+		
+			if ($no_datafile > 0) {
+				#	No Data File
+			} else {
+				$retval = writeDataFile($pathname_datafile);
+	
+				if ($retval) {
+					writelog("Data File Written OK",DEBUG);
+					$flag_update_datafile = 0;
+				} else {
+					writelog("ERROR: Could not write data file.");
+				}
+			}
 		} else {
 			# Data Version is the same
 
@@ -651,6 +713,11 @@ if (!$flag_exit) {
 
 			$flag_updated_assets = 0;
 		}
+	} else {
+		$stored_version_patch = $asset_version_patch;
+		$stored_version_data = $asset_version_data;
+
+		$flag_updated_assets = 1;
 	}
 }
 
@@ -677,24 +744,26 @@ if (!$flag_exit) {
 		if ($flag_assets_already_patched) {
 			writelog("Assets Are Already Patched!");
 			$flag_skip_backup = 3;
+
 			if ($flag_backups_exist == $mod_file_count) {
 				$retval = 0;
-				$retval = isPatched($pathname_republic_backup,$replace_republic);
-				if ($retval > 0) {
-					$retval++;
+				writelog("Checking Backup Data");
+
+				foreach my $file_asset (keys %asset_files) {
+					$file_pathname = File::Spec->catfile($pathname_root_assets, $file_asset);
+					$file_pathname = $file_pathname . ".$ext_assets";
+
+					$retval = isPatched($file_pathname,$asset_replace);
+					if ($retval > 0) {
+						$retval++;
+					}
 				}
-				$retval = isPatched($pathname_imperial_backup,$replace_imperial);
-				if ($retval > 0) {
-					$retval++;
-				}	
 
 				if ($retval > 0) {
 					writelog("Backups are not clean!  Restore will not be available.");
 					$flag_skip_backup = 6;
 				}
 			}
-
-			
 		}
 	}
 }
@@ -702,12 +771,12 @@ if (!$flag_exit) {
 writelog(" Asset Status: $flag_assets_exist",DEBUG);
 writelog("Backup Status: $flag_backups_exist",DEBUG);
 writelog("Flags:",DEBUG);
-writelog("   	          Exit: $flag_exit",DEBUG);
-writelog("           Skip Backup: $flag_skip_backup",DEBUG);
-writelog("        Data File Read: $flag_data_file_read ($flag_new_data_file)",DEBUG);
-writelog("        Assets Updated: $flag_updated_assets",DEBUG);
-writelog("Assets Already Patched: $flag_assets_already_patched",DEBUG);
-
+writelog("   	            Exit: $flag_exit",DEBUG);
+writelog("             Skip Backup: $flag_skip_backup",DEBUG);
+writelog("          Data File Read: $flag_data_file_read ($flag_new_data_file)",DEBUG);
+writelog("          Assets Updated: $flag_updated_assets",DEBUG);
+writelog("  Assets Already Patched: $flag_assets_already_patched",DEBUG);
+writelog("Skip Asset Version Check: $flag_skip_asset_version_check",DEBUG);
 
 #	Back Up Asset Files (if needed)
 
@@ -746,26 +815,28 @@ if (!$flag_exit) {
 		}
 
 		writelog("Backing Up Assets.");
-		writelog("Backing Up Asset File: $name_republic");
-		$retval = backupFile($pathname_republic_asset,$pathname_republic_backup);
-		if ($retval > 0) {
-			$flag_backup_success++;
-		} else {
-			$flag_backup_ok = 0;
+
+		foreach my $file_asset (keys %asset_files) {
+			$pathname_asset = File::Spec->catfile($pathname_root_assets, $file_asset);
+			$pathname_asset = $pathname_asset . ".$ext_assets";
+
+			$pathname_backup = File::Spec->catfile($pathname_root_backup, $file_asset);
+			$pathname_backup = $pathname_backup . ".$ext_assets";
+
+			$item_label = $asset_files{$file_asset}->[0];
+
+			writelog("Backing Up Asset File: '$file_asset' ($item_label)");
+
+			$retval = backupFile($pathname_asset,$pathname_backup);
+			if ($retval > 0) {
+				$flag_backup_success++;
+				$flag_backup_status{$file_asset} = 1;
+			} else {
+				$flag_backup_status{$file_asset} = 0;
+				$flag_backup_ok = 0;
+			}
 		}
 	
-		writelog("Backup: $retval = $pathname_republic_asset to $pathname_republic_backup",DEBUG);
-
-		writelog("Backing Up Asset File: $name_imperial");
-		$retval = backupFile($pathname_imperial_asset,$pathname_imperial_backup);
-		if ($retval > 0) {
-			$flag_backup_success++;
-		} else {
-			$flag_backup_ok = 0;
-		}
-
-		writelog("Backup: $retval = $pathname_imperial_asset to $pathname_imperial_backup",DEBUG);
-
 		if ($flag_backup_success == $mod_file_count) {
 			writelog("Backups Successful",DEBUG);
 			$flag_backup_ok = 1;
@@ -783,19 +854,26 @@ if (!$flag_exit) {
 	if ($flag_backup_ok > 0) {
 		if (!$flag_skip_patch) {
 			$flag_success = 0;
+			$retval = 0;
 
 			writelog("Patching Assets.");
 
-			writelog("Patching Assets: $name_republic");
-			$retval = patchFile($pathname_republic_asset,$search_republic,$replace_republic);
-			if ($retval > 0) {
-				$flag_success++;
-			}
+			foreach my $file_asset (keys %asset_files) {
+				$pathname_asset = File::Spec->catfile($pathname_root_assets, $file_asset);
+				$pathname_asset = $pathname_asset . ".$ext_assets";
 
-			writelog("Patching Assets: $name_imperial");
-			$retval = patchFile($pathname_imperial_asset,$search_imperial,$replace_imperial);
-			if ($retval > 0) {
-				$flag_success++;
+				$item_label = $asset_files{$file_asset}->[0];
+				$item_searchfor = $asset_files{$file_asset}->[1];
+
+				writelog("Patching Assets: $item_label '$file_asset'");
+
+				$retval = patchFile($pathname_asset,$item_searchfor,$asset_replace);
+				if ($retval > 0) {
+					$flag_patch_status{$file_asset} = 1;
+					$flag_success++;
+				} else {
+					$flag_patch_status{$file_asset} = 0;
+				}
 			}
 		
 			if ($flag_success == $mod_file_count) {
@@ -953,14 +1031,14 @@ sub assetsPatched{
 
 	$tempval = 0;
 
-	$tempval = isPatched($pathname_republic_asset,$replace_republic);
-	if ($tempval > 0) {
-		$retval++;
-	}
+	foreach my $file_asset (keys %asset_files) {
+		$file_pathname = File::Spec->catfile($pathname_root_assets, $file_asset);
+		$file_pathname = $file_pathname . ".$ext_assets";
 
-	$tempval = isPatched($pathname_imperial_asset,$replace_imperial);
-	if ($tempval > 0) {
-		$retval++;
+		$tempval = isPatched($file_pathname,$asset_replace);
+		if ($tempval > 0) {
+			$retval++;
+		}
 	}
 
 	return $retval;
@@ -972,131 +1050,11 @@ sub assetsPatched{
 sub isPatched{
 	my $pathname = shift;
 	my $searchfor = shift;
-
-	my $flag_eof = 0;
-	my $flag_loop = 1;
-	my $flag_search = 1;
-
 	my $retval = -1;
 
-	my $index = 0;
-	my $index_position;
+	#	Uses patchFile in a special mode
 
-	my $file_pointer;
-	my $file_pointer_offset;
-
-	my $string_location;
-	my $match_counter = 0;
-	my $read_counter = 0;
-	my $jump_back = 0;
-	my $read_buffer_size = 0;
-
-	$read_buffer_size = READ_BUFFER_SIZE;
-
-	return $retval unless defined $pathname;
-	return $retval unless defined $searchfor;
-
-	writelog("isPatched '$pathname'",TRACE);
-
-	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat($pathname);
-
-	$size = 0 unless defined $size;
-
-	if ($size == 0) {
-		return $retval;
-	}
-
-	if ($read_buffer_size == 0) {
-		$read_buffer_size = $size;
-		$use_jumpback = 0;
-	}
-
-	if ($read_buffer_size > $size) {
-		$read_buffer_size = $size;
-		$use_jumpback = 0;
-	}
-
-	writelog("Searching '$pathname' for '$searchfor'",DEBUG);
-	writelog("Asset file is $size bytes",DEBUG);
-
-	if ($use_jumpback) {
-		writelog("Using Jumpback Feature",DEBUG);
-	}
-	if ($read_buffer_size == $size) {
-		writelog("Not buffering data",DEBUG);
-	} else {
-		writelog("Buffering data $read_buffer_size bytes",DEBUG);
-	}
-
- 	if (open(my $fh, '<', $pathname)) {
-		binmode($fh);
-		writelog("'$pathname' is open in binary mode as READ ONLY",TRACE);
-
-		$retval = 0;
-
-		while( $flag_loop) {
-			$read_counter++;
-			read($fh, $buffer, $read_buffer_size);
-			$file_pointer = tell($fh);
-			$file_pointer_offset = $file_pointer - $read_buffer_size;
-			if ($file_pointer_offset < 1) {
-				$file_pointer_offset = 0;
-			}
-			$flag_search = 1;
-			$index_position = 0;
-			writelog("Frame $read_counter, read " . length($buffer) . " bytes",TRACE);
-			while ($flag_search) {
-				$index = index($buffer,$searchfor,$index_position);
-				if ($index >= 0) {
-					$string_location = $file_pointer_offset + $index;
-					$index_position = $index + 1;
-					$match_counter++;
-				} else {
-					$flag_search = 0;
-				}
-			}
-
-			# EOF Checks
-
-			if (length($buffer) <= $read_buffer_size) {
-				writelog("Buffer is smaller or equal to read buffer size",TRACE);	
-				if (eof($fh)) {
-					$flag_eof = 1;
-				}
-				if (length($buffer) == $read_buffer_size) {
-					$flag_eof = 1;
-				}
-				if ($flag_eof) {
-					$flag_loop = 0;
-				}
-			} else {
-				if ($use_jumpback) {
-					$jump_back = length($searchfor) * 2;
-					if ($file_pointer - $jump_back > 0) {
-						writelog("Jumping back $jump_back bytes",TRACE);		
-						$file_pointer = $file_pointer - $jump_back;
-					}
-				}
-			}
-		}
-		writelog("'$pathname' is closed",TRACE);	
-		close($fh);
-	} else {
-		writelog("ERROR: Could not open the asset file.");
-	}
-
-	if ($match_counter > 0) {
-		$retval = 1;
-	}
-
-	if ($retval > 0) {
-		writelog("Found $match_counter matches of '$searchfor'",TRACE);
-	} else {
-		if ($retval == 0) {
-			writelog(" Read Frames: $read_counter",TRACE);
-			writelog("     Matches: $match_counter",TRACE);
-		}
-	}
+	$retval = patchFile($pathname,$searchfor,IS_SEARCH_ONLY);
 
 	return $retval;
 }
@@ -1112,6 +1070,8 @@ sub patchFile{
 	my $flag_eof = 0;
 	my $flag_loop = 1;
 	my $flag_search = 1;
+	my $flag_search_only_mode = 0;
+	my $flag_error = 0;
 
 	my $retval = -1;
 
@@ -1128,6 +1088,12 @@ sub patchFile{
 	my $string_buffer = "";
 	my $jump_back = 0;
 	my $read_buffer_size = 0;
+	my $original_searchfor = $searchfor;
+	my $iteration = 0;
+
+	my $file_mode = "+<";
+
+	my @searchlist = ();
 
 	$read_buffer_size = READ_BUFFER_SIZE;
 
@@ -1135,14 +1101,28 @@ sub patchFile{
 	return $retval unless defined $searchfor;
 	return $retval unless defined $replace;
 
+	@searchlist = split /,/, $searchfor;
+
 	writelog("patchFile '$pathname'",TRACE);
 
-	if ((length($searchfor)) != (length($replace))) {
-		writelog("ERROR: Search string and replace string are not the same length!");
-		writelog("'$searchfor' is " . length($searchfor) . " bytes",DEBUG);
-		writelog("'$replace' is " . length($replace) . " bytes",DEBUG);
-		return $retval;
-	}
+	if ($replace eq IS_SEARCH_ONLY) {
+		$flag_search_only_mode = 1;
+		$file_mode = "<";
+	} else {
+		$flag_error = 0;
+		foreach my $item (@searchlist) {
+			if ((length($item)) != (length($replace))) {
+				writelog("ERROR: Search string and replace string are not the same length!");
+				writelog("'$item' is " . length($item) . " bytes",DEBUG);
+				writelog("'$replace' is " . length($replace) . " bytes",DEBUG);
+				$flag_error = 1;
+			}
+		}
+		if ($flag_error) {
+			return $retval;
+		}
+	}		
+
 
 	my ($dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,$atime,$mtime,$ctime,$blksize,$blocks) = stat($pathname);
 
@@ -1162,7 +1142,11 @@ sub patchFile{
 		$use_jumpback = 0;
 	}
 
-	writelog("Searching '$pathname' to replace '$searchfor' with '$replace'",DEBUG);
+	if ($flag_search_only_mode) {
+		writelog("Searching '$pathname' for '$searchfor'",DEBUG);
+	} else {
+		writelog("Searching '$pathname' to replace '$searchfor' with '$replace'",DEBUG);
+	}
 	writelog("Asset file is $size bytes",DEBUG);
 
 	if ($use_jumpback) {
@@ -1179,63 +1163,95 @@ sub patchFile{
 		writelog("'$pathname' is open in binary mode as READ/WRITE",TRACE);
 		$retval = 0;
 
-		while( $flag_loop) {
-			$read_counter++;
-			read($fh, $buffer, $read_buffer_size);
-			$file_pointer = tell($fh);
-			$file_pointer_offset = $file_pointer - $read_buffer_size;
-			if ($file_pointer_offset < 1) {
-				$file_pointer_offset = 0;
+		foreach $searchfor (@searchlist) {
+			$iteration++;
+			writelog("Iteration: $iteration",TRACE);
+			if ($flag_search_only_mode) {
+				writelog("Searching for '$searchfor'",TRACE);
+			} else {
+				writelog("Replacing occurances of '$searchfor'",TRACE);
 			}
-			$flag_search = 1;
-			$index_position = 0;
-			writelog("Frame $read_counter, read " . length($buffer) . " bytes",DEBUG);
-			while ($flag_search) {
-				$index = index($buffer,$searchfor,$index_position);
-				if ($index >= 0) {
-					$string_location = $file_pointer_offset + $index;
-					$index_position = $index + 1;
-					$match_counter++;
-					writelog("Found '$searchfor' at $index near $file_pointer ($string_location) - buffer page $read_counter",TRACE);
-					seek($fh,$string_location,0);
-					read($fh,$string_buffer,length($searchfor));
-					if ($string_buffer eq $searchfor) {
-						seek($fh,$string_location,0);
-						if ($flag_debug_no_op) {
-							writelog("NO OP: Replacing '$searchfor' with '$replace' at $string_location",TRACE);
+
+			#	Initialize Loop
+
+			$flag_loop = 1;
+			$flag_eof = 0;
+			$read_counter = 0;
+
+			seek($fh,0,0);
+
+			while($flag_loop) {
+				$read_counter++;
+
+				read($fh, $buffer, $read_buffer_size);
+
+				$file_pointer = tell($fh);
+				$file_pointer_offset = $file_pointer - $read_buffer_size;
+
+				if ($file_pointer_offset < 1) {
+					$file_pointer_offset = 0;
+				}
+
+				#	Initialize Search
+
+				$flag_search = 1;
+				$index_position = 0;
+
+				writelog("Frame $read_counter, read " . length($buffer) . " bytes",DEBUG);
+
+				while ($flag_search) {
+					$index = index($buffer,$searchfor,$index_position);
+					if ($index >= 0) {
+						$string_location = $file_pointer_offset + $index;
+						$index_position = $index + 1;
+						$match_counter++;
+						writelog("Found '$searchfor' at $index near $file_pointer ($string_location) - buffer page $read_counter",TRACE);
+						if ($flag_search_only_mode) {
+							# Counting Only
 						} else {
-							writelog("Replacing '$searchfor' with '$replace' at $string_location",TRACE);
-							print $fh $replace;
+							seek($fh,$string_location,0);
+							read($fh,$string_buffer,length($searchfor));
+							if ($string_buffer eq $searchfor) {
+								seek($fh,$string_location,0);
+								if ($flag_debug_no_op) {
+									writelog("NO OP: Replacing '$searchfor' with '$replace' at $string_location",TRACE);
+								} else {
+									writelog("Replacing '$searchfor' with '$replace' at $string_location",TRACE);
+									print $fh $replace;
+								}
+								$replace_counter++;
+							}
 						}
-						$replace_counter++;
+					} else {	
+						$flag_search = 0;
+					}
+				}
+
+				#	Handle EOF/Buffer/Jumpback
+
+				if (length($buffer) <= $read_buffer_size) {
+					writelog("Buffer is smaller or equal to read buffer size",TRACE);	
+					if (eof($fh)) {
+						$flag_eof = 1;
+					}
+					if (length($buffer) == $read_buffer_size) {
+						$flag_eof = 1;
+					}	
+					if ($flag_eof) {
+						$flag_loop = 0;
 					}
 				} else {
-					$flag_search = 0;
-				}
-			}
-
-			# EOF Checks
-
-			if (length($buffer) <= $read_buffer_size) {
-				writelog("Buffer is smaller or equal to read buffer size",TRACE);	
-				if (eof($fh)) {
-					$flag_eof = 1;
-				}
-				if (length($buffer) == $read_buffer_size) {
-					$flag_eof = 1;
-				}
-				if ($flag_eof) {
-					$flag_loop = 0;
-				}
-			} else {
-				if ($use_jumpback) {
-					$jump_back = length($searchfor) * 2;
-					if ($file_pointer - $jump_back > 0) {
-						writelog("Jumping back $jump_back bytes",TRACE);		
-						$file_pointer = $file_pointer - $jump_back;
+					if ($use_jumpback) {
+						$jump_back = length($searchfor) * 2;
+						if (($file_pointer - $jump_back) > 0) {
+							writelog("Jumping back $jump_back bytes",TRACE);		
+							$file_pointer = $file_pointer - $jump_back;
+						}
 					}
 				}
 			}
+			writelog(" Read Frames: $read_counter",TRACE);
+			writelog("----",TRACE);
 		}
 		writelog("'$pathname' is closed",TRACE);	
 		close($fh);
@@ -1250,10 +1266,9 @@ sub patchFile{
 	}
 
 	if ($retval > 0) {
-		writelog("Found $match_counter matches of '$searchfor', changed $replace_counter matches to '$replace'",DEBUG);
+		writelog("Found $match_counter matches of '$original_searchfor', changed $replace_counter matches to '$replace'",DEBUG);
 	} else {
 		if ($retval == 0) {
-			writelog(" Read Frames: $read_counter",TRACE);
 			writelog("     Matches: $match_counter",TRACE);
 			writelog("Replacements: $replace_counter",TRACE);
 		}
@@ -1290,17 +1305,21 @@ sub restoreAssets{
 	my $retval = 0;
 	my $tempret = 0;
 
-	$tempret = 0;
-	if (-e $pathname_republic_backup) {
-		$tempret++;
-	} else {
-		writelog("$name_republic backup is missing!",TRACE);
-	}
+	#	Check to see if backups are in place
 
-	if (-e $pathname_imperial_backup) {
-		$tempret++;
-	} else {
-		writelog("$name_imperial backup is missing!",TRACE);
+	foreach my $file_asset (keys %asset_files) {
+		$pathname_backup = File::Spec->catfile($pathname_root_backup, $file_asset);
+		$pathname_backup = $pathname_backup . ".$ext_assets";
+
+		$item_label = $asset_files{$file_asset}->[0];
+		$item_searchfor = $asset_files{$file_asset}->[1];
+
+		$tempret = 0;
+		if (-e $pathname_backup) {
+			$tempret++;
+		} else {
+			writelog("$item_label backup is missing!",TRACE);
+		}
 	}
 
 	if ($tempret == $mod_file_count) {
@@ -1311,17 +1330,21 @@ sub restoreAssets{
 		return $retval;
 	}
 
-	$tempret = 0;
-	$tempret = isPatched($pathname_republic_backup,$replace_republic);
-	if ($tempret > 0) {
-		writelog("$name_republic backup is patched!",TRACE);
-		$tempret++;
-	}
+	#	Check to see if the backups are patched versions
 
-	$tempret = isPatched($pathname_imperial_backup,$replace_imperial);
-	if ($tempret > 0) {
-		writelog("$name_imperial backup is patched!",TRACE);
-		$tempret++;
+	$tempret = 0;
+	foreach my $file_asset (keys %asset_files) {
+		$pathname_backup = File::Spec->catfile($pathname_root_backup, $file_asset);
+		$pathname_backup = $pathname_backup . ".$ext_assets";
+
+		$item_label = $asset_files{$file_asset}->[0];
+		$item_searchfor = $asset_files{$file_asset}->[1];
+
+		$tempret = isPatched($pathname_backup,$asset_replace);
+		if ($tempret > 0) {
+			writelog("$item_label backup is patched!",TRACE);
+			$tempret++;
+		}
 	}	
 
 	if ($tempret > 0) {
@@ -1332,22 +1355,28 @@ sub restoreAssets{
 		writelog("Backup files are not patched",DEBUG);
 	}
 
+	#	Attempt to restore assets
+
 	writelog("Attempting to Restore Assets");
 
-	writelog("Attempting to Restore Asset File: $name_republic");
-	$tempret = backupFile($pathname_republic_backup,$pathname_republic_asset);
-	if ($tempret > 0 ) {
-		$retval++;
-	} else {
-		writelog("ERROR: Failed to Restore Asset File: $name_republic");
-	}
+	$tempret = 0;
+	foreach my $file_asset (keys %asset_files) {
+		$pathname_asset = File::Spec->catfile($pathname_root_assets, $file_asset);
+		$pathname_asset = $pathname_asset . ".$ext_assets";
 
-	writelog("Attempting to Restore Asset File: $name_imperial");
-	$tempret = backupFile($pathname_imperial_backup,$pathname_imperial_asset);
-	if ($tempret > 0 ) {
-		$retval++;
-	} else {
-		writelog("ERROR: Failed to Restore Asset File: $name_imperial");
+		$pathname_backup = File::Spec->catfile($pathname_root_backup, $file_asset);
+		$pathname_backup = $pathname_backup . ".$ext_assets";
+
+		$item_label = $asset_files{$file_asset}->[0];
+		$item_searchfor = $asset_files{$file_asset}->[1];
+
+		writelog("Attempting to Restore Asset File: $item_label");
+		$tempret = backupFile($pathname_backup,$pathname_asset);
+		if ($tempret > 0 ) {
+			$retval++;
+		} else {
+			writelog("ERROR: Failed to Restore Asset File: $item_label");
+		}
 	}
 
 	if ($retval == $mod_file_count) {
@@ -1373,6 +1402,11 @@ sub readDataFile{
 	my $datafile_name;
 	my $datafile_marker;
 	my $flag_default = 1;
+	my $flag_loop = 0;
+	my $content_index = 0;
+	my $content_count = 0;
+	my $temp_hash;
+	my $temp_name;
 
 	return $retval unless defined $pathname;
 	
@@ -1383,6 +1417,14 @@ sub readDataFile{
 		@content = <$fh>;
 		writelog("'$pathname' is closed",TRACE);	
 		close($fh);
+ 	} else {
+		writelog("Could not open '$pathname'",TRACE);	
+	}
+	
+	$content_count = @content;
+	writelog("readDataFile '$content_count' lines read",TRACE);
+	
+	if ($content_count > 4) {
 
 		$buffer = $content[0];		# PROGRAM NAME
 		chop $buffer;
@@ -1423,20 +1465,35 @@ sub readDataFile{
 					chop $buffer;
 					$stored_version_data = $buffer;
 
-					$buffer = $content[6];		# Republic Asset Hash
-					chop $buffer;
-					$stored_hash_asset_republic = $buffer;
-
-					$buffer = $content[7];		# Imperial Asset Hash
-					chop $buffer;
-					$stored_hash_asset_imperial = $buffer;
-
 					$buffer = $content[8];		# Is Patched
 					chop $buffer;
 					$stored_is_patched = $buffer;
 	
 					$flag_default = 0;
 					$flag_update_datafile = 1;
+				}
+
+			case "201511181736"
+				{
+					$buffer = $content[3];		# gameroot
+					chop $buffer;
+					$stored_gameroot = $buffer;
+
+					$buffer = $content[4];		# backuproot
+					chop $buffer;
+					$stored_backuproot = $buffer;
+
+					$buffer = $content[5];		# Assets Patch
+					chop $buffer;
+					$stored_version_patch = $buffer;
+
+					$buffer = $content[6];		# Assets Data
+					chop $buffer;
+					$stored_version_data = $buffer;
+
+					$buffer = $content[9];		# Is Patched
+					chop $buffer;
+					$stored_is_patched = $buffer;
 				}
 		}
 
@@ -1451,53 +1508,84 @@ sub readDataFile{
 			chop $buffer;
 			$stored_backuproot = $buffer;
 
-			$buffer = $content[5];		# Assets Patch
+			$buffer = $content[5];		# Is Patched
+			chop $buffer;
+			$stored_is_patched = $buffer;
+
+			$buffer = $content[6];		# Assets Patch
 			chop $buffer;
 			$stored_version_patch = $buffer;
 
-			$buffer = $content[6];		# Assets Data
+			$buffer = $content[7];		# Assets Data
 			chop $buffer;
 			$stored_version_data = $buffer;
 
-			$buffer = $content[7];		# Republic Asset Hash
-			chop $buffer;
-			$stored_hash_asset_republic = $buffer;
 
-			$buffer = $content[8];		# Imperial Asset Hash
-			chop $buffer;
-			$stored_hash_asset_imperial = $buffer;
+			if ($content_count > 7) {
 
-			$buffer = $content[9];		# Is Patched
-			chop $buffer;
-			$stored_is_patched = $buffer;
+				# 	Asset Hashes
+
+				$flag_loop = 1;
+				$content_index = 8;
+				while($flag_loop) {
+					$buffer = $content[$content_index];
+					chop $buffer; 
+					$temp_name = $buffer;
+					$content_index++;
+
+					$buffer = $content[$content_index];
+					chop $buffer; 
+					$temp_hash = $buffer;
+					$content_index++;
+
+					if (length($temp_name) > 0) {
+						push(@stored_asset_files,$temp_name);
+						$temp_hash = INVALID_HASH unless defined $temp_hash;
+						$stored_hash_assets{$temp_name} = $temp_hash;
+					}
+
+					if ($content_index >= $content_count) {
+						$flag_loop = 0;
+					}
+				}
+			} else {
+				writelog("No file data");
+			}
+
+			$flag_valid_data_file = 1;
 		}
 	
-		$retval = 1;		
-		
+		$retval = 1;	
 	} else {
-		writelog("Could not open '$pathname'",TRACE);	
+		writelog("Invalid data file");	
 	}
 	
-	if ($debug >= TRACE) {
-		if ($retval) {
-			writelog("***",TRACE);
-			writelog("DATA FILE READ at '$pathname':",TRACE);
-			writelog(" Data File Version: $datafile_version",TRACE);
-			writelog("     Game Location: $stored_gameroot",TRACE);
-			writelog("   Backup Location: $stored_backuproot",TRACE);
-			writelog("       Asset Patch: $stored_version_patch",TRACE);
-			writelog("        Asset Data: $stored_version_data",TRACE);
-			writelog("      Republic MD5: $stored_hash_asset_republic",TRACE);
-			writelog("      Imperial MD5: $stored_hash_asset_imperial",TRACE);
-			writelog("Assets Are Patched: $stored_is_patched",TRACE);
-			writelog("***",TRACE);
-		} else {
-			writelog("***",TRACE);
-			writelog("DATA FILE FAILED READ at '$pathname':",TRACE);
-			writelog("***",TRACE);
+	if ($flag_valid_data_file) {
+		if ($debug >= TRACE) {
+			if ($retval) {
+				writelog("***",TRACE);
+				writelog("DATA FILE READ at '$pathname':",TRACE);
+				writelog(" Data File Version: $datafile_version",TRACE);
+				writelog("     Game Location: $stored_gameroot",TRACE);
+				writelog("   Backup Location: $stored_backuproot",TRACE);
+				writelog("       Asset Patch: $stored_version_patch",TRACE);
+				writelog("        Asset Data: $stored_version_data",TRACE);
+				writelog("Assets Are Patched: $stored_is_patched",TRACE);
+				writelog(" Asset Files Count: " . @stored_asset_files,TRACE);
+				writelog("   Asset Files MD5:",TRACE);
+				foreach my $file_asset (@stored_asset_files) {
+					if (length($file_asset) > 0) {
+						writelog("$file_asset = $stored_hash_assets{$file_asset}",TRACE);
+					}
+				}
+				writelog("***",TRACE);
+			} else {
+				writelog("***",TRACE);
+				writelog("DATA FILE FAILED READ at '$pathname':",TRACE);
+				writelog("***",TRACE);
+			}
 		}
 	}
-
 
 	return $retval;
 }
@@ -1526,13 +1614,15 @@ sub writeDataFile{
 		print $fh "DATA FILE\n";
 		print $fh "$gameroot\n";
 		print $fh "$backuproot\n";
+		print $fh "$stored_is_patched\n";
 		print $fh "$stored_version_patch\n";
 		print $fh "$stored_version_data\n";
-		print $fh "$stored_hash_asset_republic\n";
-		print $fh "$stored_hash_asset_imperial\n";
-		print $fh "$stored_is_patched\n";
-		writelog("'$pathname' is closed",TRACE);	
+		foreach my $file_asset (keys %asset_files) {
+			print $fh "$file_asset\n";
+			print $fh "$hash_assets{$file_asset}\n";
+		}
 		close($fh);
+		writelog("'$pathname' is closed",TRACE);	
 	} else {
 		writelog("Could not open '$pathname'",TRACE);	
 	}
@@ -1626,32 +1716,27 @@ sub showVersion{
 sub getAssetHashes{
 	my $retval = 0;
 	my $tempval = 0;
-	my $temp_hash_asset_republic;
-	my $temp_hash_asset_imperial;
 
 	writelog("getAssetHashes Getting MD5 hashes for assets.",TRACE);
-	writelog("Getting MD5 hash for $name_republic asset file.",TRACE);
 
-	$temp_hash_asset_republic = getFileHash($pathname_republic_asset);
-	if ($temp_hash_asset_republic eq INVALID_HASH) {
-		writelog("ERROR: Failed to get MD5 hash for $name_republic asset file.",TRACE);
-	} else {
-		$tempval++;
+	foreach my $file_asset (keys %asset_files) {
+		$pathname_asset = File::Spec->catfile($pathname_root_assets, $file_asset);
+		$pathname_asset = $pathname_asset . ".$ext_assets";
+
+		$item_label = $asset_files{$file_asset}->[0];
+		$item_searchfor = $asset_files{$file_asset}->[1];
+
+		writelog("getAssetHash for '$file_asset' ($item_label).",TRACE);
+		$hash_assets{$file_asset} = getFileHash($pathname_asset);
+		if ($hash_assets{$file_asset} eq INVALID_HASH) {
+			writelog("ERROR: Failed to get MD5 hash for $item_label asset file.",TRACE);
+		} else {
+			$tempval++;
+		}
 	}
-	
-	writelog("Getting MD5 hash for $name_imperial asset file.",TRACE);	
-	$temp_hash_asset_imperial = getFileHash($pathname_imperial_asset);
-	if ($temp_hash_asset_imperial eq INVALID_HASH) {
-		writelog("ERROR: Failed to get MD5 hash for $name_imperial asset file.",TRACE);
-	} else {
-		$tempval++;
-	}	
 
 	if ($tempval == $mod_file_count) {
 		$retval = 1;
-		$hash_asset_republic = $temp_hash_asset_republic;
-		$hash_asset_imperial = $temp_hash_asset_imperial;
-
 	} else {
 		$retval = 0;
 	}
@@ -1667,30 +1752,28 @@ sub getAssetHashes{
 sub compareAssetsAndBackups{
 	my $retval = 0;
 	my $counter = 0;
-
-	my $temp_hash_backup_republic = INVALID_HASH;
-	my $temp_hash_backup_imperial = INVALID_HASH;
-	my $temp_hash_asset_republic  = INVALID_HASH;
-	my $temp_hash_asset_imperial = INVALID_HASH;
+	my $temp_hash_asset = INVALID_HASH;
+	my $temp_hash_backup = INVALID_HASH;
 
 	writelog("compareAssetsAndBackups",TRACE);
 
-	$temp_hash_backup_republic = getFileHash($pathname_republic_backup);
-	$temp_hash_backup_imperial = getFileHash($pathname_imperial_backup);
+	foreach my $file_asset (keys %asset_files) {
+		$pathname_asset = File::Spec->catfile($pathname_root_assets, $file_asset);
+		$pathname_asset = $pathname_asset . ".$ext_assets";
 
-	$temp_hash_asset_republic = getFileHash($pathname_republic_asset);
-	$temp_hash_asset_imperial = getFileHash($pathname_imperial_asset);
+		$pathname_backup = File::Spec->catfile($pathname_root_backup, $file_asset);
+		$pathname_backup = $pathname_backup . ".$ext_assets";
 
-	
-	if ($temp_hash_backup_republic eq $temp_hash_asset_republic) {
-		if ($temp_hash_asset_republic ne INVALID_HASH) {
-			$counter++;
-		}
-	}
+		$item_label = $asset_files{$file_asset}->[0];
+		$item_searchfor = $asset_files{$file_asset}->[1];
 
-	if ($temp_hash_backup_imperial eq $temp_hash_asset_imperial) {
-		if ($temp_hash_asset_imperial ne INVALID_HASH) {
-			$counter++;
+		$temp_hash_asset = getFileHash($pathname_asset);
+		$temp_hash_backup = getFileHash($pathname_backup);
+
+		if ($temp_hash_asset eq $temp_hash_backup) {
+			if ($temp_hash_asset ne INVALID_HASH) {
+				$counter++;
+			}
 		}
 	}
 	
@@ -1708,18 +1791,15 @@ sub compareAssetsAndBackups{
 sub verifyAssetFiles{
 	my $retval = 0;
 
+
 	writelog("verifyAssetFiles",TRACE);
 
 	if (getAssetHashes()) {
-		if ($stored_hash_asset_republic ne INVALID_HASH) {
-			if ($stored_hash_asset_republic eq $hash_asset_republic) {
-				$retval++
-			}
-		}
-
-		if ($stored_hash_asset_imperial ne INVALID_HASH) {
-			if ($stored_hash_asset_imperial eq $hash_asset_imperial) {
-				$retval++
+		foreach my $file_asset (keys %asset_files) {
+			if ($stored_hash_assets{$file_asset} ne INVALID_HASH) {	
+				if ($stored_hash_assets{$file_asset} eq $hash_assets{$file_asset}) {
+					$retval++
+				}
 			}
 		}
 	}
