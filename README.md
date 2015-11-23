@@ -1,6 +1,11 @@
 # Star Wars: The Old Republic
 "Restraining Bolt"
 
+# ALPHA SOFTWARE
+
+This software is still in alpha testing and is not necessarily complete.    It has not been tested very throughougly at this point and unexpected bugs can and probably will crop up.
+
+
 # IMPORTANT
 
 While this mod makes every attempt not to screw things up, it is provided without any warranty. No technical support is provided.
