@@ -203,8 +203,7 @@ Finally, the switch ```-debug_nopatch``` will go through the motions of patching
 
 The asset files are actually archives containing many small sound files.
 
-The tool simply takes two of the asset files (```swtor_en-us_cnv_comp_chars_rep_1```
-and ```swtor_en-us_cnv_comp_chars_imp_1```) and replaces the internal filenames 
+The tool simply takes three of the asset files (```swtor_en-us_cnv_comp_chars_rep_1```,  ```swtor_en-us_cnv_comp_chars_imp_1``` and ```swtor_en-us_cnv_misc_1```) and replaces the internal filenames 
 where the ship droid names appear with ```XXXX```.
 
 When the game tries to play one of those sound files, it can't find it so instead of hearing C2N2 drone on, you instead hear blissful silence instead!
@@ -224,10 +223,18 @@ cnv_location_companion_characters_multi_republic_XXXX_XXXX_98_m.wem
 
 It gets the asset version information from the ```assets_swtor_main_version.txt``` file in the game's "Assets" folder.
 
+Some Star Wars: The Old Republic installations do not appear to have these version files.   In this case, the following method will be used:
+
+* It will look for ```swtor.exe``` in ```swtor\retailclient```
+* It will do a file stat on the file and use the atime value for the "patch" version.
+* It will do a MD5 digest on the file and use that value for the "data" version.
+
+If neither of these methods produces versioning, it should still work ok but backups/restores won't be as clever.
+
 
 # Data File Format
 
-The data file format has changed between v201511161613 and v201511181736.     
+The data file format has changed between v201511161613 and v201511181736, and again with v201511221732.     
 
 Any existing data file will be automatically updated when the new version of the program is run.
 
@@ -238,16 +245,45 @@ PROGRAM VERSION|Identification
 DATA FILE|Literally "DATA FILE"
 Game Installation Folder|Star Wars: The Old Republic location
 Backup (Root) Folder|Where Asset Backup Files are Stored
+Patch Applied Flag|0 = No, 1 = Yes
 Assets Patch Version|Game Asset Patch Level
 Assets Data Version|Game Asset Data Level
-Checksum of the Republic Asset File|MD5 Hash
-Checksum of the Imperial Asset File|MD5 Hash
-Patch Applied Flag|0 = No, 1 = Yes
+Asset File|This pair alternates...
+Asset File MD5 Hash|... for each file.
+
+The MD5 hash values should always be for the original, unmodified file.
+
+
+Sample Data File:
+
+```
+Restraining Bolt
+201511211848
+DATA FILE
+C:\Games\SWTOR
+D:\Backups\SWTOR_MOD
+1
+1448242126
+9334e5591d53df738cebca0cd0b8322f
+swtor_en-us_cnv_misc_1
+2b6fc9c471311facf90280d13d1498e5
+swtor_en-us_cnv_comp_chars_imp_1
+ec25016cb2ec69772fc2132234bff0a4
+swtor_en-us_cnv_comp_chars_rep_1
+f24e73989ab2b0abc2d7a3999c4e4ca4
+```
 
 v201511181736 adds the "Backup Folder" field and all the other data is now actually used. 
+v201511221732 moved the patch flag and now asset files and hashes alternate for the rest of the data file.
 
 # Changelog
 
+201511221732
+* Revised the data file (it will automatically upgrade the data file)
+* Realized there is a third asset file needed to be patched for trade skill missions
+* Some SWTOR installations do not have asset version files, made some fallback code to handle this.
+* Redesigned a number of functions.
+	
 201511181736
 * Revised the data file (it will automatically upgrade the data file)
 * Now uses Game Installation and Backup Root locations
